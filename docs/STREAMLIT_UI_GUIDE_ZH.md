@@ -13,6 +13,7 @@
 5. 校验黑板
 6. 聚合全局发现
 7. 生成下一轮动态议程
+8. 生成最终结论（JSON + Markdown）
 
 ## 安装
 
@@ -41,12 +42,13 @@ streamlit run apps/research_flow_ui.py
 
 ## 页面结构
 
-UI 包含 4 个页签：
+UI 包含 5 个页签：
 
 1. `一键全流程`
 2. `分步执行`
 3. `结果可视化`
-4. `帮助`
+4. `结论`
+5. `帮助`
 
 ## 推荐测试方式
 
@@ -58,6 +60,7 @@ UI 包含 4 个页签：
    - `Reports Dir`
    - `Feedback Dir`
 2. 在 `一键全流程` 点击 `运行完整流程`
+   - 该按钮调用后端脚本 `nanobot/skills/research-implementer/scripts/run_full_cycle.py`
 3. 切换到 `结果可视化` 查看：
    - `worker_board.json`
    - `agenda.json`
@@ -65,6 +68,9 @@ UI 包含 4 个页签：
    - `agenda.round_index` 变为 `2`
    - `active_candidates` 非空
    - `priority_questions` 非空
+5. 在 `结论` 页签确认：
+   - `final_conclusion.json` 已生成
+   - `final_conclusion.md` 已生成
 
 ### 方式 B：分步调试
 
@@ -76,6 +82,7 @@ UI 包含 4 个页签：
 4. `校验黑板`
 5. `聚合全局发现`
 6. `生成下一轮议程`
+7. `生成结论文件`
 
 该模式适合定位某一步的结构问题。
 
@@ -91,9 +98,11 @@ UI 在自动流程中使用以下命名规则：
 
 - `examples/research-demo/reports/`
 - `examples/research-demo/feedback/`
+- `examples/research-demo/review/`
 
 ## 注意事项
 
 1. 共享黑板 `worker_board.json` 目前按顺序写入，避免并发写同一文件。
 2. Worker 之间应只通过摘要和反馈 JSON 交换关键信息，不直接共享完整报告。
 3. 若接入真实实验数据，保持 digest 和 feedback 的字段结构不变。
+4. 若要输出可交付结论，建议提供 reviewer feedback（`approved/must_fix/evidence`）。

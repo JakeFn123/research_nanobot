@@ -27,5 +27,5 @@ The skill format and metadata structure follow OpenClaw's conventions to maintai
 | `research-implementer` | Coordinate worker agents through shared board and agenda files |
 | `research-worker` | Execute one candidate privately and publish only key findings |
 | `research-reviewer` | Review research outputs with tool-grounded evidence |
-| `research-blackboard` | Maintain the shared worker board and dynamic agenda |
+| `research-blackboard` | Maintain the shared worker board, dynamic agenda, and final conclusion artifacts |
 | `research-report-digest` | Extract structured board summaries from private worker reports |

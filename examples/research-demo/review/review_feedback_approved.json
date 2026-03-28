@@ -1,0 +1,12 @@
+{
+  "approved": true,
+  "must_fix": [],
+  "optional_improvements": [
+    "Add one ablation table in the final report",
+    "Document failure cases for reproducibility"
+  ],
+  "evidence": [
+    "All hard requirements are satisfied",
+    "Board and agenda checks passed"
+  ]
+}

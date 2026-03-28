@@ -1,0 +1,14 @@
+{
+  "approved": false,
+  "must_fix": [
+    "Add baseline comparison",
+    "Provide robustness check on hard negatives"
+  ],
+  "optional_improvements": [
+    "Include cost breakdown by stage"
+  ],
+  "evidence": [
+    "Baseline comparison is missing",
+    "Robustness evidence is insufficient"
+  ]
+}

@@ -11,13 +11,29 @@ REPORT_DIGEST_SCRIPT_DIR = Path("nanobot/skills/research-report-digest/scripts")
 if str(REPORT_DIGEST_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(REPORT_DIGEST_SCRIPT_DIR))
 
+PLANNER_SCRIPT_DIR = Path("nanobot/skills/research-planner/scripts").resolve()
+if str(PLANNER_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(PLANNER_SCRIPT_DIR))
+
+IMPLEMENTER_SCRIPT_DIR = Path("nanobot/skills/research-implementer/scripts").resolve()
+if str(IMPLEMENTER_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(IMPLEMENTER_SCRIPT_DIR))
+
+REVIEWER_SCRIPT_DIR = Path("nanobot/skills/research-reviewer/scripts").resolve()
+if str(REVIEWER_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(REVIEWER_SCRIPT_DIR))
+
 init_research_run = importlib.import_module("init_research_run")
 validate_board = importlib.import_module("validate_board")
 upsert_worker_entry = importlib.import_module("upsert_worker_entry")
 add_peer_feedback = importlib.import_module("add_peer_feedback")
 synthesize_findings = importlib.import_module("synthesize_findings")
 generate_agenda = importlib.import_module("generate_agenda")
+finalize_conclusion = importlib.import_module("finalize_conclusion")
 digest_report = importlib.import_module("digest_report")
+generate_plan_bundle = importlib.import_module("generate_plan_bundle")
+run_full_cycle = importlib.import_module("run_full_cycle")
+review_run = importlib.import_module("review_run")
 research_board_lib = importlib.import_module("research_board_lib")
 
 
@@ -239,3 +255,268 @@ def test_generate_agenda_uses_review_feedback_after_review(tmp_path: Path) -> No
     assert agenda["ready_for_review"] is False
     assert agenda["round_index"] == 4
     assert "add a baseline comparison" in agenda["worker_actions"]["candidate_01"]
+
+
+def test_finalize_conclusion_generates_delivery_artifacts(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run_001"
+    board_path = run_dir / "shared" / "worker_board.json"
+    agenda_path = run_dir / "shared" / "agenda.json"
+    review_feedback_path = run_dir / "review" / "review_feedback.json"
+    acceptance_path = run_dir / "plan" / "acceptance_spec.json"
+
+    research_board_lib.save_json(
+        board_path,
+        {
+            "run_id": "run_001",
+            "problem": "demo",
+            "acceptance_spec_path": "plan/acceptance_spec.json",
+            "round_index": 3,
+            "workers": {
+                "candidate_01": {
+                    "owner": "worker_01",
+                    "plan_name": "Plan A",
+                    "round": 3,
+                    "status": "active",
+                    "key_hypothesis": "A",
+                    "implementation_delta": [],
+                    "core_metrics": {"primary_metric": 0.81, "secondary_metrics": {}},
+                    "strengths": ["good stability"],
+                    "weaknesses": ["high cost"],
+                    "transferable_insights": [],
+                    "open_problems": [],
+                    "proposed_next_move": ["add one final regression check"],
+                    "private_report_path": "implementation/candidate_01/round_3/report.md",
+                }
+            },
+            "peer_feedback": {},
+            "global_findings": {
+                "dominant_strengths": ["good stability"],
+                "dominant_failures": ["high cost"],
+                "candidate_rank_hint": [
+                    {
+                        "candidate_id": "candidate_01",
+                        "primary_metric": 0.81,
+                        "praise_score": 2,
+                        "concern_score": 1,
+                    }
+                ],
+                "fusion_opportunities": [],
+                "improvement_targets": ["optimize cost without harming stability"],
+            },
+        },
+    )
+    research_board_lib.save_json(
+        agenda_path,
+        {
+            "round_index": 3,
+            "ready_for_review": True,
+            "active_candidates": ["candidate_01"],
+            "priority_questions": [],
+            "worker_actions": {"candidate_01": ["optimize cost"]},
+        },
+    )
+    research_board_lib.save_json(
+        review_feedback_path,
+        {
+            "approved": True,
+            "must_fix": [],
+            "optional_improvements": ["add one ablation table"],
+            "evidence": ["all hard checks passed"],
+        },
+    )
+    research_board_lib.save_json(
+        acceptance_path,
+        {
+            "hard_requirements": ["all hard checks passed"],
+            "soft_requirements": ["cost should be optimized"],
+            "review_checks": [{"name": "validate_board_shape", "required": True}],
+        },
+    )
+
+    conclusion = finalize_conclusion.finalize_conclusion(
+        board_path=board_path,
+        agenda_path=agenda_path,
+        output_json=run_dir / "deliverables" / "final_conclusion.json",
+        output_md=run_dir / "deliverables" / "final_conclusion.md",
+        review_feedback_path=review_feedback_path,
+    )
+
+    assert conclusion["readiness"]["review_status"] == "approved"
+    assert conclusion["readiness"]["ready_for_delivery"] is True
+    assert conclusion["selected_solution"]["winner_candidate_id"] == "candidate_01"
+    assert (run_dir / "deliverables" / "final_conclusion.json").exists()
+    assert (run_dir / "deliverables" / "final_conclusion.md").exists()
+
+
+def test_finalize_conclusion_blocks_delivery_on_rejected_review(tmp_path: Path) -> None:
+    board_path = tmp_path / "worker_board.json"
+    agenda_path = tmp_path / "agenda.json"
+    review_feedback_path = tmp_path / "review_feedback.json"
+
+    research_board_lib.save_json(
+        board_path,
+        {
+            "run_id": "run_002",
+            "problem": "demo",
+            "acceptance_spec_path": "",
+            "round_index": 2,
+            "workers": {
+                "candidate_01": {
+                    "owner": "worker_01",
+                    "plan_name": "Plan A",
+                    "round": 2,
+                    "status": "active",
+                    "key_hypothesis": "A",
+                    "implementation_delta": [],
+                    "core_metrics": {"primary_metric": 0.70, "secondary_metrics": {}},
+                    "strengths": ["stable"],
+                    "weaknesses": ["no baseline"],
+                    "transferable_insights": [],
+                    "open_problems": [],
+                    "proposed_next_move": [],
+                    "private_report_path": "implementation/candidate_01/round_2/report.md",
+                }
+            },
+            "peer_feedback": {},
+            "global_findings": {
+                "dominant_strengths": ["stable"],
+                "dominant_failures": ["no baseline"],
+                "candidate_rank_hint": [],
+                "fusion_opportunities": [],
+                "improvement_targets": ["add baseline comparison"],
+            },
+        },
+    )
+    research_board_lib.save_json(
+        agenda_path,
+        {
+            "round_index": 3,
+            "ready_for_review": False,
+            "active_candidates": ["candidate_01"],
+            "priority_questions": [],
+            "worker_actions": {},
+        },
+    )
+    research_board_lib.save_json(
+        review_feedback_path,
+        {
+            "approved": False,
+            "must_fix": ["add baseline comparison"],
+            "optional_improvements": [],
+            "evidence": ["baseline is missing"],
+        },
+    )
+
+    conclusion = finalize_conclusion.finalize_conclusion(
+        board_path=board_path,
+        agenda_path=agenda_path,
+        output_json=tmp_path / "final_conclusion.json",
+        output_md=tmp_path / "final_conclusion.md",
+        review_feedback_path=review_feedback_path,
+    )
+
+    assert conclusion["readiness"]["review_status"] == "rejected"
+    assert conclusion["readiness"]["ready_for_delivery"] is False
+    assert "add baseline comparison" in conclusion["next_actions"]
+
+
+def test_generate_plan_bundle_writes_required_files(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run_plan"
+    summary = generate_plan_bundle.generate_plan_bundle(
+        problem="Improve planning quality with low latency",
+        output_dir=run_dir,
+        candidate_count=3,
+        search_results=1,
+    )
+
+    assert summary["candidate_count"] == 3
+    assert (run_dir / "plan" / "candidates.json").exists()
+    assert (run_dir / "plan" / "acceptance_spec.json").exists()
+    assert (run_dir / "plan" / "plan_brief.md").exists()
+
+
+def test_run_full_cycle_end_to_end_with_reviewer_and_conclusion(tmp_path: Path) -> None:
+    run_root = tmp_path / "runs"
+    run_id = "full_cycle_001"
+    reports_root = tmp_path / "reports"
+
+    candidates_payload = [
+        {"candidateId": "candidate_01", "name": "Plan A"},
+        {"candidateId": "candidate_02", "name": "Plan B"},
+        {"candidateId": "candidate_03", "name": "Plan C"},
+    ]
+    acceptance_payload = {
+        "hard_requirements": [
+            "shared board can be initialized",
+            "worker digests can be published",
+            "peer feedback can be merged",
+            "agenda can be generated from board findings",
+            "review feedback can be generated with tool evidence",
+            "final conclusion artifacts can be generated",
+        ],
+        "soft_requirements": [],
+        "review_checks": [
+            {"name": "validate_board_shape", "tool": "exec", "required": True},
+            {"name": "generate_next_agenda", "tool": "exec", "required": True},
+        ],
+    }
+    candidates_file = tmp_path / "candidates.json"
+    acceptance_file = tmp_path / "acceptance.json"
+    research_board_lib.save_json(candidates_file, candidates_payload)
+    research_board_lib.save_json(acceptance_file, acceptance_payload)
+
+    for round_index in (1, 2, 3):
+        for idx, candidate_id in enumerate(("candidate_01", "candidate_02", "candidate_03"), start=1):
+            report = reports_root / f"{candidate_id}_round_{round_index}_report.md"
+            metrics = reports_root / f"{candidate_id}_round_{round_index}_metrics.json"
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(
+                (
+                    "## Key Hypothesis\n"
+                    f"{candidate_id} hypothesis\n\n"
+                    "## Implementation Delta\n"
+                    f"- change r{round_index}\n\n"
+                    "## Strengths\n"
+                    f"- strength {idx}\n\n"
+                    "## Weaknesses\n"
+                    f"- weakness {idx}\n\n"
+                    "## Transferable Insights\n"
+                    f"- insight {idx}\n\n"
+                    "## Open Problems\n"
+                    f"- problem {idx}\n\n"
+                    "## Proposed Next Move\n"
+                    f"- next move {idx}\n"
+                ),
+                encoding="utf-8",
+            )
+            research_board_lib.save_json(
+                metrics,
+                {
+                    "primary_metric": 0.80 - (idx * 0.03) + (round_index * 0.01),
+                    "secondary_metrics": {"latency_ms": 800 + idx},
+                },
+            )
+
+    summary = run_full_cycle.run_full_cycle(
+        run_root=run_root,
+        run_id=run_id,
+        problem="Test full cycle",
+        candidate_count=3,
+        max_rounds=3,
+        max_review_cycles=2,
+        reports_root=reports_root,
+        allow_fallback_rounds=False,
+        auto_plan=False,
+        candidates_file_input=candidates_file,
+        acceptance_file_input=acceptance_file,
+    )
+
+    run_dir = run_root / run_id
+    assert summary["approved"] is True
+    assert (run_dir / "review" / "review_feedback.json").exists()
+    assert (run_dir / "review" / "review_report.md").exists()
+    assert (run_dir / "deliverables" / "final_conclusion.json").exists()
+    assert (run_dir / "deliverables" / "final_conclusion.md").exists()
+
+    review_feedback = research_board_lib.load_json(run_dir / "review" / "review_feedback.json")
+    assert review_feedback["approved"] is True

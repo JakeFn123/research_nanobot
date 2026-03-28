@@ -73,3 +73,19 @@ python nanobot/skills/research-blackboard/scripts/generate_agenda.py \
 ## Important Constraint
 
 Do not redesign the runtime. Treat the run as a protocol executed through files, tools, and skills.
+
+## Automation Script
+
+For local end-to-end protocol execution (planner -> implementer -> reviewer -> conclusion), use:
+
+```bash
+python nanobot/skills/research-implementer/scripts/run_full_cycle.py \
+  --run-root "<workspace>/research_runs" \
+  --run-id "<run_id>" \
+  --problem "<problem statement>" \
+  --reports-root "<reports_dir>" \
+  --candidates-file "<optional candidates.json>" \
+  --acceptance-file "<optional acceptance_spec.json>"
+```
+
+This script only uses skill-layer scripts and shared artifacts. It does not modify nanobot core runtime.

@@ -49,3 +49,16 @@ Read:
 ## Important Constraint
 
 Do not accept a result just because the narrative sounds strong. Approval must be grounded in tool-based evidence.
+
+## Automation Script
+
+Use the reviewer script to generate standardized review artifacts:
+
+```bash
+python nanobot/skills/research-reviewer/scripts/review_run.py \
+  --board "<run_dir>/shared/worker_board.json" \
+  --agenda "<run_dir>/shared/agenda.json" \
+  --acceptance "<run_dir>/plan/acceptance_spec.json" \
+  --output-feedback "<run_dir>/review/review_feedback.json" \
+  --output-report "<run_dir>/review/review_report.md"
+```

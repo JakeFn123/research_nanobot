@@ -34,6 +34,15 @@ python nanobot/skills/research-blackboard/scripts/init_research_run.py \
   --acceptance-file "<run_dir>/plan/acceptance_spec.json"
 ```
 
+You can also auto-generate planner artifacts with:
+
+```bash
+python nanobot/skills/research-planner/scripts/generate_plan_bundle.py \
+  --problem "<problem statement>" \
+  --output-dir "<run_dir>" \
+  --candidate-count 3
+```
+
 ## Candidate Rules
 
 Each candidate should include:
