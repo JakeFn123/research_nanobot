@@ -77,6 +77,10 @@
 ```text
 docs/
   RESEARCH_MULTI_AGENT_SYSTEM_DESIGN_ZH.md
+  STREAMLIT_UI_GUIDE_ZH.md
+
+apps/
+  research_flow_ui.py
 
 examples/
   research-demo/
@@ -114,6 +118,27 @@ pip install -e .
 ```bash
 pytest tests/agent/test_research_skill_scripts.py
 ```
+
+## 本地可视化 UI（Streamlit）
+
+项目已经内置一个本地可视化测试台，可用于执行和观察完整流程：
+
+- 初始化 run
+- 生成并写入 worker 摘要
+- 合并 peer feedback
+- 校验黑板、聚合发现、生成下一轮议程
+- 可视化查看 `worker_board.json` 与 `agenda.json`
+
+安装 UI 依赖并启动：
+
+```bash
+pip install -e .[ui]
+streamlit run apps/research_flow_ui.py
+```
+
+详细 UI 使用说明见：
+
+- [STREAMLIT_UI_GUIDE_ZH.md](./docs/STREAMLIT_UI_GUIDE_ZH.md)
 
 ## 从 0 到 1 跑一个 demo run
 
