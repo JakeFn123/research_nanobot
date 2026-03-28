@@ -1,59 +1,59 @@
-# nanobot Easy Start Guide
+# nanobot 中文易懂上手指南
 
-This guide explains nanobot in plain language so you can quickly understand what it does and how to use it.
+这份指南用最直白的方式解释 nanobot：它是什么、能做什么、怎么快速用起来。
 
-## 1) What is nanobot?
+## 1）nanobot 是什么？
 
-nanobot is a lightweight personal AI assistant framework.
+nanobot 是一个轻量级个人 AI 助手框架。
 
-In practice, it gives you:
-- A command-line AI assistant (`nanobot agent`)
-- A gateway service that connects the assistant to chat apps (`nanobot gateway`)
-- Built-in tools (file read/write, shell, web search/fetch, scheduling, subagents)
-- Persistent memory and workspace files so behavior can be customized over time
+你可以把它理解成：
+- 一个可在命令行直接对话的 AI 助手（`nanobot agent`）
+- 一个可接入聊天平台的网关服务（`nanobot gateway`）
+- 一套内置工具能力（读写文件、执行命令、网页搜索/抓取、定时任务、子代理）
+- 一套可长期积累的工作区记忆与配置文件
 
-Think of it as: "a small, hackable agent runtime you can run locally and connect to Telegram/Discord/WhatsApp/etc."
+一句话：它是“可以本地运行、可定制、可接入 Telegram/Discord/WhatsApp 等平台”的 Agent 运行框架。
 
-## 2) What nanobot does under the hood
+## 2）它在内部是怎么工作的？
 
-When you send a message:
-1. Message enters nanobot (CLI or a chat channel)
-2. Agent builds context from:
-- system identity + runtime info
-- workspace bootstrap files (`AGENTS.md`, `SOUL.md`, `USER.md`, `TOOLS.md`)
-- memory files (`memory/MEMORY.md`, `memory/HISTORY.md`)
-- available skills
-3. LLM responds (and may call tools)
-4. nanobot executes tool calls and loops until it has a final answer
-5. Reply is sent back to CLI or the chat app
+当你发出一条消息时，nanobot 的处理流程是：
+1. 接收消息（来自 CLI 或聊天平台）
+2. 构建上下文：
+- 系统身份与运行时信息
+- 工作区引导文件（`AGENTS.md`、`SOUL.md`、`USER.md`、`TOOLS.md`）
+- 记忆文件（`memory/MEMORY.md`、`memory/HISTORY.md`）
+- 可用技能（skills）
+3. 调用 LLM 得到回复（必要时触发工具调用）
+4. 执行工具调用并循环，直到得到最终答案
+5. 将结果发回 CLI 或聊天平台
 
-Main runtime parts:
-- `nanobot/agent/loop.py`: core agent loop
-- `nanobot/channels/manager.py`: channel lifecycle + outbound routing/retry
-- `nanobot/cron/service.py`: scheduled jobs
-- `nanobot/agent/memory.py`: memory consolidation
+核心代码位置：
+- `nanobot/agent/loop.py`：Agent 主循环
+- `nanobot/channels/manager.py`：渠道管理与消息发送重试
+- `nanobot/cron/service.py`：定时任务服务
+- `nanobot/agent/memory.py`：记忆整合与持久化
 
-## 3) Important folders and files
+## 3）最重要的目录和文件
 
-Runtime defaults:
-- Config: `~/.nanobot/config.json`
-- Workspace: `~/.nanobot/workspace`
+默认运行目录：
+- 配置：`~/.nanobot/config.json`
+- 工作区：`~/.nanobot/workspace`
 
-Workspace files you will use most:
-- `SOUL.md`: assistant personality and values
-- `USER.md`: your profile/preferences
-- `TOOLS.md`: tool behavior notes
-- `HEARTBEAT.md`: periodic tasks checklist
-- `memory/MEMORY.md`: durable long-term facts
-- `memory/HISTORY.md`: searchable history log
-- `skills/`: your custom skills
+你最常会改的文件：
+- `SOUL.md`：助手人格与价值观
+- `USER.md`：你的个人偏好和背景
+- `TOOLS.md`：工具行为说明
+- `HEARTBEAT.md`：周期任务清单
+- `memory/MEMORY.md`：长期记忆
+- `memory/HISTORY.md`：可检索历史日志
+- `skills/`：你的自定义技能
 
-## 4) Install from source (your current clone)
+## 4）从源码安装（你现在这个仓库）
 
-You already cloned the repo at:
+你已经克隆到了：
 - `/Users/jakefan/nanobot`
 
-Recommended setup:
+推荐安装步骤：
 
 ```bash
 cd /Users/jakefan/nanobot
@@ -63,33 +63,33 @@ pip install -U pip
 pip install -e .
 ```
 
-Verify:
+验证安装：
 
 ```bash
 nanobot --version
 ```
 
-## 5) Fastest way to get working (2-3 minutes)
+## 5）最快 2~3 分钟跑起来
 
-### Step A: Initialize files
+### 第一步：初始化
 
 ```bash
 nanobot onboard
 ```
 
-Or interactive wizard:
+想要交互式引导可用：
 
 ```bash
 nanobot onboard --wizard
 ```
 
-### Step B: Edit config
+### 第二步：配置模型
 
-Open `~/.nanobot/config.json` and set at least:
-- one provider API key
-- default model (+ provider recommended)
+编辑 `~/.nanobot/config.json`，至少设置：
+- 一个 provider 的 API key
+- 默认模型（建议同时指定 provider）
 
-Example (OpenRouter):
+示例（OpenRouter）：
 
 ```json
 {
@@ -107,94 +107,94 @@ Example (OpenRouter):
 }
 ```
 
-### Step C: Start chatting
+### 第三步：开始对话
 
 ```bash
 nanobot agent
 ```
 
-Single message mode:
+单条命令模式：
 
 ```bash
-nanobot agent -m "Help me summarize this project"
+nanobot agent -m "帮我总结这个项目"
 ```
 
-## 6) Two ways to run nanobot
+## 6）两种运行方式
 
-### Mode 1: CLI assistant
+### 方式 A：CLI 对话模式
 
-Use this when you want terminal-based conversations.
+适合终端直接问答：
 
 ```bash
 nanobot agent
 ```
 
-### Mode 2: Gateway (chat apps + periodic tasks)
+### 方式 B：网关模式（聊天平台 + 周期任务）
 
-Use this when you want Telegram/Discord/etc. integration and heartbeat scheduling.
+适合接入 Telegram/Discord 等平台，并启用 heartbeat 周期执行：
 
 ```bash
 nanobot gateway
 ```
 
-## 7) Connect chat apps
+## 7）接入聊天平台
 
-nanobot supports multiple channels (Telegram, Discord, WhatsApp, Weixin, Feishu, DingTalk, Slack, Matrix, Email, QQ, Wecom, Mochat).
+nanobot 支持多个渠道：Telegram、Discord、WhatsApp、Weixin、Feishu、DingTalk、Slack、Matrix、Email、QQ、Wecom、Mochat。
 
-Typical flow:
-1. Put channel config under `channels` in `~/.nanobot/config.json`
-2. For QR/OAuth style channels, run:
+典型流程：
+1. 在 `~/.nanobot/config.json` 的 `channels` 中配置对应渠道
+2. 对于 QR/OAuth 类渠道，执行：
 
 ```bash
 nanobot channels login <channel>
 ```
 
-3. Start gateway:
+3. 启动网关：
 
 ```bash
 nanobot gateway
 ```
 
-Check channel status:
+查看渠道状态：
 
 ```bash
 nanobot channels status
 ```
 
-## 8) Tools and safety model
+## 8）工具与安全策略
 
-By default, the agent can use tools such as:
-- filesystem tools (read/write/edit/list)
-- shell execution
-- web search + web fetch
-- scheduling and messaging tools
+默认可用工具包括：
+- 文件系统工具（读/写/编辑/列目录）
+- Shell 执行
+- Web 搜索与网页抓取
+- 定时与消息工具
 
-Safety control you should know:
-- `tools.restrictToWorkspace`: when true, tool file access is limited to the workspace path
+你应重点了解的安全开关：
+- `tools.restrictToWorkspace`：启用后，工具文件访问会限制在工作区内
 
-## 9) Scheduling and automation
+## 9）自动化能力
 
-There are two scheduling styles:
+nanobot 有两类“定时/自动化”方式：
 
-1. Heartbeat checklist (`HEARTBEAT.md`):
-- Gateway checks this file every 30 minutes by default
-- If tasks exist, agent executes and notifies your latest active chat channel
+1. Heartbeat 清单（`HEARTBEAT.md`）
+- 网关默认每 30 分钟检查一次
+- 有任务就执行，并把结果发到你最近活跃的聊天渠道
 
-2. Cron jobs (tool-driven):
-- Persisted in workspace at `cron/jobs.json`
-- Supports one-time, interval, and cron-expression schedules
+2. Cron 任务（工具创建）
+- 持久化保存到 `cron/jobs.json`
+- 支持一次性、固定间隔、cron 表达式
 
-## 10) Customize behavior quickly
+## 10）快速定制助手行为
 
-Most effective edits:
-1. `SOUL.md`: set desired assistant behavior and tone
-2. `USER.md`: your language, level, and work context
-3. `AGENTS.md` (if present): high-priority operating rules
-4. `skills/your-skill/SKILL.md`: add reusable workflows
+最有效的 4 个入口：
+1. `SOUL.md`：定义助手风格、语气、行为边界
+2. `USER.md`：填写你的语言、技术水平、工作场景
+3. `AGENTS.md`（若存在）：高优先级运行规则
+4. `skills/你的技能/SKILL.md`：沉淀可复用工作流
 
-Because these files are included in prompt context, changing them immediately changes assistant behavior.
+这些文件会进入上下文，所以你改完后行为会立即变化。
 
-## 11) Daily command cheat sheet
+## 11）日常命令速查
 
 ```bash
 nanobot onboard
@@ -207,25 +207,25 @@ nanobot channels login <channel>
 nanobot provider login openai-codex
 ```
 
-## 12) Troubleshooting
+## 12）常见问题
 
 - `nanobot: command not found`
-  - Activate virtualenv and reinstall `pip install -e .`
-- No model response
-  - Check `~/.nanobot/config.json` for API key + provider/model pair
-- Channel not sending
-  - Check `nanobot channels status`, credentials, and gateway logs
-- Want isolated bot instances
-  - Use `-c <config>` and `-w <workspace>` to run independent setups
+  - 先激活虚拟环境，再执行 `pip install -e .`
+- 模型无响应
+  - 检查 `~/.nanobot/config.json` 的 key、provider、model 是否匹配
+- 渠道发不出去
+  - 先看 `nanobot channels status`，再看网关日志
+- 想开多个互相隔离实例
+  - 用 `-c <config>` + `-w <workspace>` 指定不同配置与工作区
 
-## 13) Good first workflow to learn nanobot
+## 13）建议的上手路径（第一次用）
 
-1. `nanobot onboard --wizard`
-2. Configure one provider key + model
-3. Run `nanobot agent` and ask it to inspect a local folder
-4. Edit `~/.nanobot/workspace/USER.md` to match your style
-5. Enable one channel (Telegram is usually easiest)
-6. Run `nanobot gateway`
-7. Add one periodic task in `HEARTBEAT.md`
+1. 执行 `nanobot onboard --wizard`
+2. 配好一个 provider key + model
+3. 用 `nanobot agent` 先做一次本地目录任务
+4. 修改 `~/.nanobot/workspace/USER.md` 让风格更贴合你
+5. 先接入一个渠道（一般 Telegram 最快）
+6. 启动 `nanobot gateway`
+7. 在 `HEARTBEAT.md` 加一个周期任务
 
-After this, you will understand the full framework lifecycle.
+走完这一套，你就会对 nanobot 的完整生命周期有清晰认知。
