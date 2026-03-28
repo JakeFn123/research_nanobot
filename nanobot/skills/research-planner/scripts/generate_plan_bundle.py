@@ -101,8 +101,9 @@ def _acceptance_spec() -> dict[str, Any]:
             "worker digests can be published",
             "peer feedback can be merged",
             "agenda can be generated from board findings",
-            "review feedback can be generated with tool evidence",
-            "final conclusion artifacts can be generated",
+            "main experiment can be reproduced",
+            "report uses actual measured metrics",
+            "worker notes record adopted and rejected peer ideas",
         ],
         "soft_requirements": [
             "global findings identify strengths and failures",
@@ -112,8 +113,8 @@ def _acceptance_spec() -> dict[str, Any]:
         "review_checks": [
             {"name": "validate_board_shape", "tool": "exec", "required": True},
             {"name": "generate_next_agenda", "tool": "exec", "required": True},
-            {"name": "review_feedback_written", "tool": "exec", "required": True},
-            {"name": "final_conclusion_written", "tool": "exec", "required": True},
+            {"name": "verify_report_metric_consistency", "tool": "exec", "required": True},
+            {"name": "require_worker_notes_evidence", "tool": "exec", "required": True},
         ],
     }
 

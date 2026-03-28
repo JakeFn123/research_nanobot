@@ -42,13 +42,14 @@ streamlit run apps/research_flow_ui.py
 
 ## 页面结构
 
-UI 包含 5 个页签：
+UI 包含 6 个页签：
 
 1. `一键全流程`
 2. `分步执行`
 3. `结果可视化`
 4. `结论`
-5. `帮助`
+5. `调试日志`
+6. `帮助`
 
 ## 推荐测试方式
 
@@ -71,6 +72,9 @@ UI 包含 5 个页签：
 5. 在 `结论` 页签确认：
    - `final_conclusion.json` 已生成
    - `final_conclusion.md` 已生成
+6. 在 `调试日志` 页签确认：
+   - `runtime_trace.jsonl` 有逐步事件
+   - `runtime_trace.md` 有可读表格日志
 
 ### 方式 B：分步调试
 
@@ -106,3 +110,4 @@ UI 在自动流程中使用以下命名规则：
 2. Worker 之间应只通过摘要和反馈 JSON 交换关键信息，不直接共享完整报告。
 3. 若接入真实实验数据，保持 digest 和 feedback 的字段结构不变。
 4. 若要输出可交付结论，建议提供 reviewer feedback（`approved/must_fix/evidence`）。
+5. 一键全流程会自动生成 `debug/runtime_trace.jsonl` 与 `debug/runtime_trace.md`。

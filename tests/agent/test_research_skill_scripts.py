@@ -116,12 +116,29 @@ def test_digest_report_and_upsert_worker_entry_roundtrip(tmp_path: Path) -> None
             "problem": "demo",
             "acceptance_spec_path": "plan/acceptance_spec.json",
             "round_index": 0,
-            "workers": {},
+            "workers": {
+                "candidate_01": {
+                    "owner": "worker_01",
+                    "plan_name": "Plan A",
+                    "round": 0,
+                    "status": "pending",
+                    "key_hypothesis": "",
+                    "implementation_delta": [],
+                    "core_metrics": {"primary_metric": None, "secondary_metrics": {}},
+                    "strengths": [],
+                    "weaknesses": [],
+                    "transferable_insights": [],
+                    "open_problems": [],
+                    "proposed_next_move": [],
+                    "private_report_path": "implementation/candidate_01/round_1/report.md",
+                }
+            },
+            "worker_ownership": {"candidate_01": "worker_01"},
             "peer_feedback": {},
             "global_findings": {},
         },
     )
-    upsert_worker_entry.upsert_worker_entry(board_path, "candidate_01", digest_path)
+    upsert_worker_entry.upsert_worker_entry(board_path, "candidate_01", digest_path, actor="worker_01")
     validate_board.validate_board(board_path)
 
     board = research_board_lib.load_json(board_path)
@@ -420,6 +437,156 @@ def test_finalize_conclusion_blocks_delivery_on_rejected_review(tmp_path: Path) 
     assert "add baseline comparison" in conclusion["next_actions"]
 
 
+def test_upsert_worker_entry_rejects_owner_mismatch(tmp_path: Path) -> None:
+    board_path = tmp_path / "worker_board.json"
+    research_board_lib.save_json(
+        board_path,
+        {
+            "run_id": "run_001",
+            "problem": "demo",
+            "acceptance_spec_path": "",
+            "round_index": 0,
+            "workers": {
+                "candidate_01": {
+                    "owner": "worker_01",
+                    "plan_name": "Plan A",
+                    "round": 0,
+                    "status": "pending",
+                    "key_hypothesis": "",
+                    "implementation_delta": [],
+                    "core_metrics": {"primary_metric": None, "secondary_metrics": {}},
+                    "strengths": [],
+                    "weaknesses": [],
+                    "transferable_insights": [],
+                    "open_problems": [],
+                    "proposed_next_move": [],
+                    "private_report_path": "",
+                }
+            },
+            "worker_ownership": {"candidate_01": "worker_01"},
+            "peer_feedback": {},
+            "global_findings": {},
+        },
+    )
+    entry_path = tmp_path / "entry.json"
+    research_board_lib.save_json(
+        entry_path,
+        {
+            "owner": "worker_02",
+            "plan_name": "Plan A",
+            "round": 1,
+            "status": "active",
+            "key_hypothesis": "x",
+            "implementation_delta": [],
+            "core_metrics": {"primary_metric": 0.1, "secondary_metrics": {}},
+            "strengths": [],
+            "weaknesses": [],
+            "transferable_insights": [],
+            "open_problems": [],
+            "proposed_next_move": [],
+            "private_report_path": "implementation/candidate_01/round_1/report.md",
+        },
+    )
+
+    try:
+        upsert_worker_entry.upsert_worker_entry(board_path, "candidate_01", entry_path, actor="worker_02")
+    except ValueError as exc:
+        assert "Owner mismatch" in str(exc) or "not allowed" in str(exc)
+    else:
+        raise AssertionError("Expected owner mismatch to raise ValueError")
+
+
+def test_review_run_detects_metric_mismatch_and_missing_notes(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run_001"
+    board_path = run_dir / "shared" / "worker_board.json"
+    agenda_path = run_dir / "shared" / "agenda.json"
+    acceptance_path = run_dir / "plan" / "acceptance_spec.json"
+
+    report_path = run_dir / "implementation" / "candidate_01" / "round_1" / "report.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        "## Key Hypothesis\nx\n\n## Implementation Delta\n- a\n\n## Strengths\n- s\n\n## Weaknesses\n- w\n\n## Transferable Insights\n- i\n\n## Open Problems\n- o\n\n## Proposed Next Move\n- n\n",
+        encoding="utf-8",
+    )
+    research_board_lib.save_json(
+        report_path.with_name("metrics.json"),
+        {"primary_metric": 0.88, "secondary_metrics": {}},
+    )
+
+    research_board_lib.save_json(
+        board_path,
+        {
+            "run_id": "run_001",
+            "problem": "demo",
+            "acceptance_spec_path": "plan/acceptance_spec.json",
+            "round_index": 1,
+            "workers": {
+                "candidate_01": {
+                    "owner": "worker_01",
+                    "plan_name": "Plan A",
+                    "round": 1,
+                    "status": "active",
+                    "key_hypothesis": "x",
+                    "implementation_delta": ["a"],
+                    "core_metrics": {"primary_metric": 0.70, "secondary_metrics": {}},
+                    "strengths": ["s"],
+                    "weaknesses": ["w"],
+                    "transferable_insights": ["i"],
+                    "open_problems": ["o"],
+                    "proposed_next_move": ["n"],
+                    "private_report_path": str(report_path),
+                }
+            },
+            "worker_ownership": {"candidate_01": "worker_01"},
+            "peer_feedback": {
+                "candidate_01_on_candidate_01_dummy": {
+                    "observed_strengths": ["s"],
+                    "observed_weaknesses": ["w"],
+                    "borrowable_ideas": ["i"],
+                    "suggested_improvement": ["n"],
+                }
+            },
+            "global_findings": {"improvement_targets": ["x"]},
+        },
+    )
+    research_board_lib.save_json(
+        agenda_path,
+        {
+            "round_index": 1,
+            "ready_for_review": False,
+            "active_candidates": ["candidate_01"],
+            "priority_questions": ["x"],
+            "worker_actions": {"candidate_01": ["x"]},
+        },
+    )
+    research_board_lib.save_json(
+        acceptance_path,
+        {
+            "hard_requirements": [
+                "main experiment can be reproduced",
+                "report uses actual measured metrics",
+                "worker notes record adopted and rejected peer ideas",
+            ],
+            "soft_requirements": [],
+            "review_checks": [
+                {"name": "verify_report_metric_consistency", "required": True},
+                {"name": "require_worker_notes_evidence", "required": True},
+            ],
+        },
+    )
+
+    payload = review_run.review_run(
+        board_path=board_path,
+        agenda_path=agenda_path,
+        acceptance_path=acceptance_path,
+        output_feedback=run_dir / "review" / "review_feedback.json",
+        output_report=run_dir / "review" / "review_report.md",
+    )
+
+    assert payload["approved"] is False
+    assert any("metrics" in item.lower() or "notes" in item.lower() for item in payload["must_fix"])
+
+
 def test_generate_plan_bundle_writes_required_files(tmp_path: Path) -> None:
     run_dir = tmp_path / "run_plan"
     summary = generate_plan_bundle.generate_plan_bundle(
@@ -517,6 +684,74 @@ def test_run_full_cycle_end_to_end_with_reviewer_and_conclusion(tmp_path: Path) 
     assert (run_dir / "review" / "review_report.md").exists()
     assert (run_dir / "deliverables" / "final_conclusion.json").exists()
     assert (run_dir / "deliverables" / "final_conclusion.md").exists()
+    assert (run_dir / "debug" / "runtime_trace.jsonl").exists()
+    assert (run_dir / "debug" / "runtime_trace.md").exists()
 
     review_feedback = research_board_lib.load_json(run_dir / "review" / "review_feedback.json")
     assert review_feedback["approved"] is True
+    trace_lines = (run_dir / "debug" / "runtime_trace.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert any("pipeline.start" in line for line in trace_lines)
+    assert any("pipeline.finish" in line for line in trace_lines)
+
+
+def test_run_full_cycle_strict_round_fails_without_artifacts(tmp_path: Path) -> None:
+    run_root = tmp_path / "runs"
+    run_id = "strict_fail_001"
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir(parents=True, exist_ok=True)
+
+    candidates_file = tmp_path / "candidates.json"
+    acceptance_file = tmp_path / "acceptance.json"
+    research_board_lib.save_json(
+        candidates_file,
+        [
+            {"candidateId": "candidate_01", "name": "Plan A"},
+            {"candidateId": "candidate_02", "name": "Plan B"},
+            {"candidateId": "candidate_03", "name": "Plan C"},
+        ],
+    )
+    research_board_lib.save_json(
+        acceptance_file,
+        {
+            "hard_requirements": ["shared board can be initialized"],
+            "soft_requirements": [],
+            "review_checks": [{"name": "validate_board_shape", "required": True}],
+        },
+    )
+
+    # Only round_1 artifacts exist; round_2+ should fail in strict mode.
+    for candidate_id in ("candidate_01", "candidate_02", "candidate_03"):
+        report = reports_root / f"{candidate_id}_round_1_report.md"
+        metrics = reports_root / f"{candidate_id}_round_1_metrics.json"
+        report.write_text(
+            (
+                "## Key Hypothesis\nx\n\n"
+                "## Implementation Delta\n- a\n\n"
+                "## Strengths\n- s\n\n"
+                "## Weaknesses\n- w\n\n"
+                "## Transferable Insights\n- i\n\n"
+                "## Open Problems\n- o\n\n"
+                "## Proposed Next Move\n- n\n"
+            ),
+            encoding="utf-8",
+        )
+        research_board_lib.save_json(metrics, {"primary_metric": 0.5, "secondary_metrics": {}})
+
+    try:
+        run_full_cycle.run_full_cycle(
+            run_root=run_root,
+            run_id=run_id,
+            problem="Strict mode test",
+            candidate_count=3,
+            max_rounds=2,
+            max_review_cycles=1,
+            reports_root=reports_root,
+            allow_fallback_rounds=False,
+            auto_plan=False,
+            candidates_file_input=candidates_file,
+            acceptance_file_input=acceptance_file,
+        )
+    except RuntimeError as exc:
+        assert "Worker subprocess round failed" in str(exc)
+    else:
+        raise AssertionError("Expected strict mode to fail when round_2 artifacts are missing")

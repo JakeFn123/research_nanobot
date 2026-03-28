@@ -44,6 +44,8 @@
    - `nanobot/skills/research-reviewer/scripts/review_run.py`
 4. Conclusion 结论收敛
    - `nanobot/skills/research-blackboard/scripts/finalize_conclusion.py`
+5. Debug 运行轨迹
+   - `nanobot/skills/research-implementer/scripts/debug_trace.py`
 
 ## 4. 安装与环境准备
 
@@ -63,7 +65,7 @@ pip install -e .[ui]
 pytest tests/agent/test_research_skill_scripts.py
 ```
 
-预期：`8 passed`（允许出现 `asyncio_mode` warning）。
+预期：`11 passed`（允许出现 `asyncio_mode` warning）。
 
 ## 5. 输入文件规范
 
@@ -155,6 +157,9 @@ streamlit run apps/research_flow_ui.py
 2. `结论`
    - `final_conclusion.json` 已生成
    - `final_conclusion.md` 已生成
+3. `调试日志`
+   - `debug/runtime_trace.jsonl` 已生成
+   - `debug/runtime_trace.md` 已生成
 
 ## 7. 方式 B：使用 CLI 一键跑完整闭环（推荐用于自动化）
 
@@ -172,6 +177,8 @@ python nanobot/skills/research-implementer/scripts/run_full_cycle.py \
   --acceptance-file "$PWD/examples/research-demo/plan/acceptance_spec.json" \
   --skip-auto-plan
 ```
+
+说明：`run_full_cycle.py` 默认启用严格轮次工件校验（每轮必须有对应报告与指标）。如仅有单轮演示数据，可额外加 `--allow-fallback-round-artifacts`。
 
 ### 7.2 无计划文件时自动生成（Planner 自动化）
 
@@ -210,6 +217,13 @@ python nanobot/skills/research-implementer/scripts/run_full_cycle.py \
 - `deliverables/final_conclusion.json`
 - `deliverables/final_conclusion.md`
 - `deliverables/pipeline_summary.json`
+
+### 8.4 调试层工件
+
+- `debug/runtime_trace.jsonl`
+  - 每一步的结构化事件日志（时间、步骤、状态、详情）
+- `debug/runtime_trace.md`
+  - 可读表格版运行轨迹
 
 ## 9. 如何判断这次运行是否成功
 
@@ -274,4 +288,3 @@ python -m json.tool "$RUN_DIR/deliverables/pipeline_summary.json"
 
 - 系统设计文档：`docs/RESEARCH_MULTI_AGENT_SYSTEM_DESIGN_ZH.md`
 - UI 使用说明：`docs/STREAMLIT_UI_GUIDE_ZH.md`
-

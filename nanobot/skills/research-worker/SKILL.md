@@ -88,3 +88,12 @@ When iterating, explicitly state in `notes.md`:
 - which peer idea you rejected
 - what code or experiment changed
 - whether the new result improved
+
+## Script Helpers
+
+For scripted protocol execution, worker-stage helpers are available:
+
+```bash
+python nanobot/skills/research-worker/scripts/run_worker_round.py --help
+python nanobot/skills/research-worker/scripts/run_peer_feedback.py --help
+```

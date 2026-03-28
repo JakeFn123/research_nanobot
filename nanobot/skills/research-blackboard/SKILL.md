@@ -70,6 +70,7 @@ python nanobot/skills/research-blackboard/scripts/finalize_conclusion.py --help
 ## Board Rules
 
 1. Each worker owns only its own entry under `workers.<candidate_id>`.
+   Use `--actor` when calling write scripts to enforce ownership.
 2. Peer feedback keys must be shaped like `<from>_on_<to>`.
 3. Global findings are derived, not hand-written.
 4. Keep the board high-signal. Never paste a full report into it.

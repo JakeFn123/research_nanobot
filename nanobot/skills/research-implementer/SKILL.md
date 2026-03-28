@@ -29,6 +29,7 @@ Spawn one worker per candidate and pass:
 - current round objective
 
 Use the current `spawn` tool. Do not depend on runtime changes.
+For script-mode execution, this repository uses process-level worker spawning (`run_worker_round.py` / `run_peer_feedback.py`) to simulate one worker per candidate while keeping protocol artifacts identical.
 
 ## Round Loop
 
@@ -89,3 +90,14 @@ python nanobot/skills/research-implementer/scripts/run_full_cycle.py \
 ```
 
 This script only uses skill-layer scripts and shared artifacts. It does not modify nanobot core runtime.
+By default it is strict on round artifacts (no fallback). Add `--allow-fallback-round-artifacts` only for demo data.
+
+Debug traces are written to:
+
+- `<run_dir>/debug/runtime_trace.jsonl`
+- `<run_dir>/debug/runtime_trace.md`
+
+Useful flags:
+
+- `--debug-console` to print each event to stdout
+- `--no-debug` to disable trace files

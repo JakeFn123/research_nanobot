@@ -76,6 +76,23 @@ def _safe_json(path: Path) -> dict[str, Any] | list[Any] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _safe_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            item = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
 def _path_from_input(value: str) -> Path:
     """Normalize pasted paths by trimming accidental whitespace around each segment."""
     compact = value.replace("\r", "").replace("\n", "").replace("\t", "")
@@ -116,13 +133,15 @@ def _resolve_candidate_artifacts(
     return fallback_report, fallback_metrics, fallback_round, True
 
 
-def _run_paths(run_root: Path, run_id: str) -> tuple[Path, Path, Path, Path, Path]:
+def _run_paths(run_root: Path, run_id: str) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
     run_dir = run_root / run_id
     board_path = run_dir / "shared" / "worker_board.json"
     agenda_path = run_dir / "shared" / "agenda.json"
     conclusion_json = run_dir / "deliverables" / "final_conclusion.json"
     conclusion_md = run_dir / "deliverables" / "final_conclusion.md"
-    return run_dir, board_path, agenda_path, conclusion_json, conclusion_md
+    debug_jsonl = run_dir / "debug" / "runtime_trace.jsonl"
+    debug_md = run_dir / "debug" / "runtime_trace.md"
+    return run_dir, board_path, agenda_path, conclusion_json, conclusion_md, debug_jsonl, debug_md
 
 
 def _init_session_state() -> None:
@@ -143,8 +162,10 @@ def _init_session_state() -> None:
         st.session_state.setdefault(key, value)
 
 
-def _render_paths_overview(run_root: Path, run_id: str) -> tuple[Path, Path, Path, Path, Path]:
-    run_dir, board_path, agenda_path, conclusion_json, conclusion_md = _run_paths(run_root, run_id)
+def _render_paths_overview(run_root: Path, run_id: str) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
+    run_dir, board_path, agenda_path, conclusion_json, conclusion_md, debug_jsonl, debug_md = _run_paths(
+        run_root, run_id
+    )
     st.caption("当前运行目录")
     st.code(str(run_dir), language="text")
     col1, col2 = st.columns(2)
@@ -158,7 +179,11 @@ def _render_paths_overview(run_root: Path, run_id: str) -> tuple[Path, Path, Pat
     st.code(str(conclusion_json), language="text")
     st.write("`deliverables/final_conclusion.md`")
     st.code(str(conclusion_md), language="text")
-    return run_dir, board_path, agenda_path, conclusion_json, conclusion_md
+    st.write("`debug/runtime_trace.jsonl`")
+    st.code(str(debug_jsonl), language="text")
+    st.write("`debug/runtime_trace.md`")
+    st.code(str(debug_md), language="text")
+    return run_dir, board_path, agenda_path, conclusion_json, conclusion_md, debug_jsonl, debug_md
 
 
 def _require_file(path: Path, label: str) -> None:
@@ -200,7 +225,12 @@ def _run_full_demo() -> None:
         candidates_file_input=candidates_file,
         acceptance_file_input=acceptance_file,
     )
-    st.info(f"full cycle done, approved={summary.get('approved')}, winner={summary.get('winner_candidate')}")
+    st.info(
+        "full cycle done, "
+        f"approved={summary.get('approved')}, "
+        f"winner={summary.get('winner_candidate')}, "
+        f"trace={summary.get('debug_trace_jsonl')}"
+    )
 
 
 def main() -> None:
@@ -232,11 +262,17 @@ def main() -> None:
     reports_dir = _path_from_input(st.session_state.reports_dir)
     feedback_dir = _path_from_input(st.session_state.feedback_dir)
 
-    run_dir, board_path, agenda_path, conclusion_json_path, conclusion_md_path = _render_paths_overview(
-        run_root, run_id
-    )
+    (
+        run_dir,
+        board_path,
+        agenda_path,
+        conclusion_json_path,
+        conclusion_md_path,
+        debug_jsonl_path,
+        debug_md_path,
+    ) = _render_paths_overview(run_root, run_id)
 
-    tabs = st.tabs(["一键全流程", "分步执行", "结果可视化", "结论", "帮助"])
+    tabs = st.tabs(["一键全流程", "分步执行", "结果可视化", "结论", "调试日志", "帮助"])
 
     with tabs[0]:
         st.subheader("一键全流程执行")
@@ -439,11 +475,27 @@ def main() -> None:
             st.info("暂未找到 final_conclusion.md")
 
     with tabs[4]:
+        st.subheader("调试日志")
+        rows = _safe_jsonl(debug_jsonl_path)
+        if not rows:
+            st.info("暂未找到 runtime trace，请先运行一键全流程。")
+        else:
+            st.metric("Trace Events", len(rows))
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+
+        st.markdown("`runtime_trace.md`")
+        if debug_md_path.exists():
+            st.code(debug_md_path.read_text(encoding="utf-8"), language="markdown")
+        else:
+            st.info("暂未找到 runtime_trace.md")
+
+    with tabs[5]:
         st.subheader("使用建议")
         st.write("1. 先在 '一键全流程' 跑通，再用 '分步执行' 做定向调试。")
         st.write("2. 当前流程对共享黑板是顺序写入，避免并发写同一个 board 文件。")
         st.write("3. 评审通过后再生成结论文件，可直接作为阶段性交付结果。")
-        st.write("4. 如果你要接入真实 Worker 输出，保持 digest JSON 字段结构不变。")
+        st.write("4. 调试页签会展示每一步运行日志，便于定位失败步骤。")
+        st.write("5. 如果你要接入真实 Worker 输出，保持 digest JSON 字段结构不变。")
         st.code(
             "streamlit run apps/research_flow_ui.py",
             language="bash",
