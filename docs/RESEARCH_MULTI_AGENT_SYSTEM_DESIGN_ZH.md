@@ -1,1123 +1,1167 @@
-# 基于 nanobot 的科研全流程多智能体系统设计文档
+# 基于 nanobot Tools 与 Skills 的科研全流程动态多智能体系统设计文档
 
-## 1. 文档目标
+## 1. 文档定位
 
-本文档给出一套可以落地到当前 `nanobot` 架构上的多智能体系统设计方案，用于支持“科研想法的提出、方案规划、实现、实验、总结、评审、迭代、收敛”的完整闭环。
+本文档重新定义一套严格受限于当前 `nanobot` 能力边界的科研多智能体系统方案。
 
-目标系统需要满足以下要求：
+本方案必须满足以下硬约束：
 
-1. 采用“规划者 - 实现者 - 评审者”三类主角色闭环。
-2. 规划者先将模糊研究需求拆解为可执行方案与验收标准。
-3. 实现者针对 3 到 5 个候选方案并行调起等数量的智能体完成实现与实验。
-4. 实现者内部必须进行 3 轮“报告 - 讨论 - 迭代 - 再实验”。
-5. 评审者必须基于工具和验收标准做客观审查，不达标则退回重做。
-6. 最终输出不是单次回答，而是一组结构化产物：最优方案、实现代码、实验报告、讨论记录、评审结论、下一轮建议。
+1. 不修改 `nanobot` 整体架构。
+2. 不修改 `nanobot` 核心代码。
+3. 所有功能实现只允许基于现有 `tools` 能力与 `skills` 机制完成。
+4. 不采用状态机式实现作为系统核心。
+5. Worker Agents 在互相讨论时不能直接交换完整成果与完整报告。
+6. Worker Agents 必须把各自方案的关键信息写入一个公共 JSON 文档。
+7. 其余 Worker Agents 必须只基于该公共 JSON 文档提取强弱项、提出改进、寻找更优解。
+8. 评审者主 Agent 仍需基于验收标准使用工具验收，不通过则打回给实现者重做。
 
-本文档不是论文式概念描述，而是偏工程落地的系统设计说明。
+因此，这份文档不是“如何给 nanobot 增加一个新的研究引擎”，而是“如何在不改核心架构的前提下，用现有 `tools + skills + spawn` 搭建一个动态科研多智能体工作流”。
 
-## 2. 设计结论摘要
+## 2. 核心设计结论
 
-最核心的设计结论有三点：
+这套系统应当被实现为：
 
-1. 当前 `nanobot` 已具备多智能体系统的关键积木：
-   - 主 Agent 循环
-   - 工具调用框架
-   - 子代理执行能力
-   - 会话持久化
-   - 记忆系统
-   - Web 搜索 / 抓取 / Shell / 文件工具
+- 一个由主 Agent 驱动的技能化研究协议
+- 多个通过现有 `spawn` 工具拉起的 Worker Agents
+- 一组约定好的共享 JSON / Markdown 工件
+- 一套通过 Skills 固化的角色行为规范
 
-2. 但当前 `nanobot` 的 `spawn`/`SubagentManager` 仍是“后台子任务助手”范式，不足以直接承载“多方案并行实现 + 多轮结构化讨论 + 审查回退”的复杂科研编排。
+而不应当被实现为：
 
-3. 因此应在现有 `AgentRunner + AgentLoop + SessionManager + ToolRegistry` 之上新增一个“研究工作流编排层”，而不是把所有复杂逻辑直接塞进 prompt 或仅依赖现有 `spawn`。
+- 新增一层 Python 编排内核
+- 新增状态机驱动框架
+- 改造 `AgentLoop`、`AgentRunner`、`SubagentManager`、`SessionManager`
+- 改写核心 prompt 构建流程
+- 让 Worker 之间互相发送全部报告
 
-## 3. 与当前 nanobot 架构的映射
+一句话总结：
 
-### 3.1 当前可复用能力
+本系统要做的是“协议层设计”，不是“内核层重构”。
 
-结合当前仓库实现，以下能力可直接复用：
+## 3. 为什么必须采用 Tools + Skills 协议层实现
 
-- `nanobot/agent/loop.py`
-  - 提供主 Agent 的消息处理、工具执行、会话保存和 `process_direct()` 入口。
-- `nanobot/agent/runner.py`
-  - 提供独立于产品层的 Agent 执行循环，非常适合作为“角色型 Agent”的通用运行内核。
-- `nanobot/agent/subagent.py`
-  - 提供后台子代理执行能力，可作为并行 worker 的起点。
-- `nanobot/agent/tools/*`
-  - 已具备文件、Shell、Web、消息、Cron 等工具。
-- `nanobot/session/manager.py`
-  - 提供会话历史持久化。
-- `nanobot/agent/memory.py`
-  - 提供长期记忆与历史归档。
-- `nanobot/config/schema.py`
-  - 提供集中配置入口，可扩展出 `research` 配置。
+当前 `nanobot` 已经具备以下可直接利用的能力：
 
-### 3.2 当前直接不足的地方
+- `spawn`
+  - 可启动后台子代理
+- `read_file`
+  - 可读取公共文档与私有工件
+- `write_file` / `edit_file`
+  - 可维护共享 JSON 黑板和各自实验产物
+- `list_dir`
+  - 可做目录发现
+- `exec`
+  - 可运行实验、脚本、评测命令
+- `web_search` / `web_fetch`
+  - 可做研究检索
+- `skills`
+  - 可为不同角色注入稳定工作协议
 
-如果直接拿现在的 `spawn` 来做这个系统，会遇到四个问题：
+因此，最合理的方案是：
 
-1. `spawn` 当前默认把子代理结果压缩成“给主 agent 的 1 到 2 句自然语言摘要”，这会丢失科研工作流所需的结构化产物。
-2. 子代理没有“显式任务句柄 / 结果对象 / 工件路径 / 评分结果”这些一等公民概念。
-3. 现有子代理更像“辅助任务执行器”，而不是“可追踪、可审计、可迭代的角色节点”。
-4. 当前没有一个工作流级别的状态机来表示：
-   - 方案生成完成
-   - 候选实现完成
-   - 第几轮讨论
-   - 是否通过评审
-   - 是否打回重做
+1. 不碰核心运行时。
+2. 用 Skills 定义 Planner / Implementer / Reviewer / Worker 的行为协议。
+3. 用共享工件定义它们的交互协议。
+4. 用现有工具完成检索、实现、实验、总结、讨论、审查。
 
-因此，正确做法是：
+## 4. 系统总体思路
 
-- 保留现有 Agent/Tool 基础层不动。
-- 新增“研究编排层”作为领域层。
-- 把 Planner / Implementer / Reviewer 设计成角色化 Agent。
-- 把候选方案、实验报告、讨论记录、评审结论全部沉淀为结构化文件。
+系统采用“三主角色 + 多 Worker + 公共黑板”的结构：
 
-## 4. 系统目标与非目标
+1. Planner 主 Agent
+   - 负责调研、拆解、生成 3 到 5 个候选方案与验收标准。
+2. Implementer 主 Agent
+   - 负责并行拉起与候选方案数量相同的 Worker Agents。
+   - 负责汇总公共黑板中的关键信息，驱动三轮讨论与迭代。
+3. Reviewer 主 Agent
+   - 负责基于验收标准用工具核查结果。
+   - 若不通过，则生成打回要求，交还 Implementer。
+4. Worker Agents
+   - 每个 Worker 只负责一个候选方案。
+   - 每轮只把关键信息写入公共 JSON 黑板。
+   - 完整报告保存在自己的私有目录，不直接广播给其他 Worker。
 
-### 4.1 系统目标
+系统的核心不是“谁进入哪个状态”，而是“谁向公共黑板写入什么信息、谁从公共黑板读取什么信息、如何基于这些信息迭代”。
 
-本系统要解决的是：
+## 5. 与 ColaCare 的对应关系
 
-- 输入一个模糊科研目标，例如：
-  - “设计一种新的 RAG 结构用于多轮医学问答”
-  - “验证某个 idea 是否可以提升代码 Agent 的规划能力”
-  - “比较三种方法在某 benchmark 上的效果并自动迭代”
-- 自动完成：
-  - 研究检索
-  - 可行性分析
-  - 方案生成
-  - 验收标准定义
-  - 并行实现
-  - 实验与报告
-  - 多轮讨论改进
-  - 评审与回退
-  - 收敛出最优可交付方案
+本方案参考 ColaCare 的思路，但只吸收其协作范式，不照搬其医疗场景实现。
 
-### 4.2 非目标
+对应关系如下：
 
-以下内容不属于本设计的直接目标：
+1. ColaCare 中多个 DoctorAgents 并行分析。
+   - 对应本系统中多个 Worker Agents 并行实现多个候选科研方案。
+2. ColaCare 中 MetaAgent 汇总并推进多轮讨论。
+   - 对应本系统中的 Implementer 主 Agent。
+3. ColaCare 强调多轮协作。
+   - 对应本系统中的三轮“关键信息共享 - 互评 - 改进 - 再实验”。
+4. ColaCare 将协作结果逐步落盘。
+   - 对应本系统中的私有报告目录与公共 JSON 黑板并存机制。
 
-- 严格意义上的全局最优解证明
-- 无限预算的 AutoML / NAS 式搜索
-- 完全无人监督地处理高风险现实世界实验
-- 用一个 prompt 替代真实工程编排
+但本方案在一个关键点上比 ColaCare 更严格：
 
-这里的“最优解”在工程上应解释为：
+- Worker 之间不能交换完整报告，只能交换“结构化关键摘要”。
 
-- 在给定预算、轮数、工具能力和验收标准下的当前最优可行解
+## 6. 系统中的两类信息空间
 
-## 5. 角色设计
+这是整个设计最关键的部分。
 
-系统采用“三主角色 + 多工作者”的结构。
+### 6.1 私有空间
 
-### 5.1 Planner 主 Agent
+每个 Worker 拥有自己的私有目录，用于保存：
 
-Planner 是入口角色，负责把模糊需求转为可执行研究计划。
+- 完整实现代码
+- 完整实验日志
+- 完整实验报告
+- 失败分析
+- 中间分析文档
 
-职责：
+这些内容默认不直接发给其他 Worker。
 
-1. 澄清研究目标与边界。
-2. 使用 Web 搜索 / 文献抓取 / 仓库阅读做前置调研。
-3. 判断问题是否适合自动化多智能体迭代。
-4. 产出 3 到 5 个候选方案。
-5. 为每个方案定义：
-   - 目标
-   - 核心假设
-   - 实现路线
-   - 风险
-   - 资源需求
-6. 定义统一验收标准与对比指标。
-7. 把结果交给 Implementer。
+### 6.2 公共空间
 
-输出物：
+所有 Worker 共享一个公共 JSON 黑板。
 
-- `plan/plan_brief.md`
-- `plan/candidates.json`
-- `plan/acceptance_spec.json`
-- `plan/research_context.md`
+它只保存“可供同行吸收、比较、批判和借鉴的关键信息”，不保存完整报告正文。
 
-### 5.2 Implementer 主 Agent
+也就是说：
 
-Implementer 是中枢编排角色，不直接完成所有编码，而是负责：
+- 私有空间负责完整性
+- 公共空间负责协作性
 
-1. 根据候选方案数量启动等数量的 Worker Agents。
-2. 为每个方案分配独立工作目录与实验上下文。
-3. 收集每个 Worker 的实现结果与实验报告。
-4. 发起 3 轮讨论和改进。
-5. 在多方案之间做结论融合、弱点修复、优势迁移。
-6. 形成“当前最优方案”和完整实验档案。
-7. 把交付物提交给 Reviewer。
+## 7. 公共 JSON 黑板机制
 
-Implementer 更像“研究 PM + 技术负责人 + 实验编排器”的组合。
+建议在工作区中使用如下公共文件：
 
-输出物：
+`research_runs/<run_id>/shared/worker_board.json`
 
-- `implementation/candidate_*/`
-- `implementation/round_*/discussion.md`
-- `implementation/final_solution/`
-- `implementation/final_report.md`
-- `implementation/final_summary.json`
+这个文件是整个动态多智能体系统的协作中心。
 
-### 5.3 Worker Agents
+### 7.1 黑板的目标
 
-每个候选方案对应一个 Worker Agent。
+黑板必须承担以下职责：
 
-职责：
+1. 让每个 Worker 公布自己当前方案的最小必要关键信息。
+2. 让其他 Worker 快速识别：
+   - 哪些点值得借鉴
+   - 哪些点存在漏洞
+   - 哪些改进最可能带来收益
+3. 让 Implementer 看到整个群体协作的实时格局。
+4. 让 Reviewer 在最终验收时能追踪演化路径。
 
-1. 理解自己负责的方案。
-2. 在独立目录中实现代码。
-3. 运行实验。
-4. 写出结构化实验报告。
-5. 参与讨论轮，回应其他方案结论。
-6. 基于讨论结论修改实现并再次实验。
+### 7.2 黑板不应包含的内容
 
-每个 Worker 只对一个方案负责，避免职责混乱。
+黑板中不应包含：
 
-### 5.4 Reviewer 主 Agent
+- 全量报告正文
+- 全部日志
+- 完整实验输出
+- 大段自由文本推理
+- 整个代码实现
 
-Reviewer 是闭环的质量门禁，不负责“创造方案”，只负责“基于标准验收”。
+黑板必须保持“高密度、可比对、可机器读取、可复用”的结构。
 
-职责：
+### 7.3 黑板的数据结构建议
 
-1. 读取 Planner 制定的验收标准。
-2. 使用工具核查实现与实验结果。
-3. 检查复现实验是否可执行。
-4. 检查报告是否真实反映代码与结果。
-5. 给出结构化 verdict：
-   - pass
-   - revise
-   - reject
-6. 若不通过，明确指出退回原因与修复要求。
-7. 通过后生成最终验收报告。
-
-输出物：
-
-- `review/review_report.md`
-- `review/review_verdict.json`
-- `review/failure_items.json`（若未通过）
-
-## 6. 借鉴 ColaCare 的部分
-
-本设计参考了 ColaCare 的两个核心思想，但做了领域迁移：
-
-### 6.1 并行专家分析
-
-ColaCare 中多个 `DoctorAgent` 并行分析，同一问题由多个专业视角分别给出报告。
-
-在本系统中，对应为：
-
-- 多个候选科研方案并行实现
-- 每个方案一个 Worker Agent
-- 每个 Worker 输出完整实验报告而不是只给答案
-
-### 6.2 汇总者驱动的多轮协作
-
-ColaCare 中由 `LeaderAgent/MetaAgent` 汇总初始意见，再进行多轮协作讨论，并且 `max_round=3`。
-
-在本系统中，对应为：
-
-- Implementer 先收集第一轮候选实现结果
-- 然后组织 3 轮讨论
-- 每轮讨论都要求：
-  - 互相阅读报告
-  - 识别强弱项
-  - 提出改进
-  - 重新实现 / 重新实验
-  - 更新报告
-
-### 6.3 结构化落盘
-
-ColaCare 的另一个重要工程习惯是：
-
-- 每个 Agent 的输出、消息、阶段性总结都落盘保存
-
-这点非常适合科研系统，因为科研过程必须可审计、可复盘、可复现。
-
-因此本设计明确要求：
-
-- 每轮讨论与实验必须落盘
-- 每个候选方案必须有独立目录
-- 所有关键阶段结果必须有 JSON 和 Markdown 双份产物
-
-## 7. 系统总体架构
-
-建议采用如下逻辑分层：
-
-1. 基础运行层
-   - `AgentRunner`
-   - `ToolRegistry`
-   - `LLMProvider`
-   - `SessionManager`
-   - `MemoryStore`
-
-2. 研究编排层
-   - `ResearchWorkflowManager`
-   - `PlannerAgent`
-   - `ImplementerAgent`
-   - `ReviewerAgent`
-   - `WorkerAgentHandle`
-   - `DiscussionCoordinator`
-
-3. 工件与状态层
-   - `ResearchProjectStore`
-   - `ResearchStateMachine`
-   - `ArtifactIndex`
-   - `MetricsRegistry`
-
-4. 产品入口层
-   - CLI 命令：`nanobot research run`
-   - 可选 channel 命令：`/research ...`
-
-## 8. 端到端流程设计
-
-### 8.1 主流程
-
-```text
-用户需求
-  -> Planner 调研与拆解
-  -> 生成 3~5 个候选方案 + 验收标准
-  -> Implementer 为每个方案启动一个 Worker
-  -> Worker 并行实现 + 跑实验 + 写初始报告
-  -> Implementer 汇总初始结果
-  -> 进行第 1 轮讨论与改进
-  -> 进行第 2 轮讨论与改进
-  -> 进行第 3 轮讨论与改进
-  -> Implementer 汇总最优方案和最终报告
-  -> Reviewer 基于验收标准用工具核查
-  -> 若不通过，返回 Implementer 重做
-  -> 若通过，形成最终交付
-```
-
-### 8.2 详细阶段
-
-#### 阶段 A：规划
-
-输入：
-
-- 用户科研目标
-- 约束条件
-- 可用算力 / 时间 / 数据 / 工具
-
-Planner 执行动作：
-
-1. 文献与项目检索。
-2. 现有方法可行性分析。
-3. 风险与资源预算评估。
-4. 方案拆解。
-5. 定义验收标准。
-
-输出：
-
-- 3 到 5 个候选方案
-- 每个方案的明确实施说明
-- 统一评测协议
-
-#### 阶段 B：并行实现
-
-Implementer 为每个候选方案创建独立目录：
-
-```text
-research_runs/<run_id>/implementation/candidate_01/
-research_runs/<run_id>/implementation/candidate_02/
-...
-```
-
-每个 Worker 负责：
-
-1. 读取候选方案说明。
-2. 创建或修改代码。
-3. 运行实验。
-4. 记录指标。
-5. 输出初始报告。
-
-输出：
-
-- `implementation_notes.md`
-- `experiment_config.json`
-- `metrics.json`
-- `report.md`
-
-#### 阶段 C：三轮讨论和迭代
-
-每轮固定包含 4 个步骤：
-
-1. 互读
-   - Worker 读取其他候选方案报告
-2. 讨论
-   - 给出自己对其他方案优缺点的判断
-3. 融合
-   - Implementer 汇总讨论并形成 round-level 改进指令
-4. 迭代
-   - Worker 按新指令修改实现并重跑实验
-
-轮数固定为 3 轮，除非配置允许提前停止。
-
-#### 阶段 D：最优解汇总
-
-Implementer 在三轮结束后完成：
-
-1. 选择最优候选方案，或组合多个方案优点形成融合版。
-2. 生成最终实现目录。
-3. 生成最终实验报告。
-4. 生成“为什么这是当前最优解”的解释。
-
-#### 阶段 E：评审验收
-
-Reviewer 读取：
-
-- `acceptance_spec.json`
-- 最终代码
-- 最终报告
-- 实验数据
-- 讨论记录
-
-Reviewer 使用工具完成：
-
-1. 代码结构检查
-2. 命令可执行性检查
-3. 关键实验复现
-4. 指标比对
-5. 报告一致性检查
-6. 风险与漏洞检查
-
-结果：
-
-- 通过：输出最终验收报告
-- 不通过：生成结构化打回清单
-
-## 9. 为什么需要“工作流编排层”
-
-如果让一个大模型直接通过 prompt 承担所有角色，会出现三个典型问题：
-
-1. 上下文污染
-   - 规划、实现、评审混在同一个上下文里，会导致角色偏移和自我宽容。
-2. 缺少可审计性
-   - 无法明确知道哪一轮是谁提出了哪个修改建议。
-3. 缺少工程边界
-   - 无法稳定地把“候选方案、指标、报告、评审结论”保存成结构化资产。
-
-所以必须把“角色”和“工作流状态”提升为程序中的一等对象。
-
-## 10. 状态机设计
-
-建议引入显式状态机：
-
-```text
-CREATED
-PLANNING
-PLANNED
-IMPLEMENTING
-DISCUSSING_ROUND_1
-DISCUSSING_ROUND_2
-DISCUSSING_ROUND_3
-SYNTHESIZING
-REVIEWING
-REVISE_REQUIRED
-PASSED
-FAILED
-```
-
-状态转换规则：
-
-1. `CREATED -> PLANNING`
-2. `PLANNING -> PLANNED`
-3. `PLANNED -> IMPLEMENTING`
-4. `IMPLEMENTING -> DISCUSSING_ROUND_1`
-5. `DISCUSSING_ROUND_1 -> DISCUSSING_ROUND_2`
-6. `DISCUSSING_ROUND_2 -> DISCUSSING_ROUND_3`
-7. `DISCUSSING_ROUND_3 -> SYNTHESIZING`
-8. `SYNTHESIZING -> REVIEWING`
-9. `REVIEWING -> PASSED`
-10. `REVIEWING -> REVISE_REQUIRED`
-11. `REVISE_REQUIRED -> IMPLEMENTING`
-12. 任意阶段发生不可恢复错误可进入 `FAILED`
-
-## 11. 目录与工件设计
-
-建议在 workspace 下增加独立工作目录：
-
-```text
-workspace/
-  research_runs/
-    <run_id>/
-      project_spec.json
-      status.json
-      logs/
-      plan/
-        plan_brief.md
-        candidates.json
-        acceptance_spec.json
-        research_context.md
-      implementation/
-        candidate_01/
-          task.json
-          code/
-          experiments/
-          metrics.json
-          report.md
-          round_1_notes.md
-          round_2_notes.md
-          round_3_notes.md
-        candidate_02/
-        candidate_03/
-      discussion/
-        round_1/
-          cross_reviews.json
-          coordinator_summary.md
-        round_2/
-          cross_reviews.json
-          coordinator_summary.md
-        round_3/
-          cross_reviews.json
-          coordinator_summary.md
-      synthesis/
-        final_choice.json
-        final_report.md
-        final_artifacts.json
-      review/
-        review_verdict.json
-        review_report.md
-        failure_items.json
-      deliverables/
-        best_solution/
-        final_summary.md
-        final_summary.json
-```
-
-## 12. 数据模型设计
-
-### 12.1 ProjectSpec
+建议采用如下结构：
 
 ```json
 {
-  "runId": "research_20260328_001",
-  "title": "Improve agent planning for software tasks",
-  "problemStatement": "...",
-  "constraints": {
-    "timeBudgetMinutes": 180,
-    "maxCandidates": 5,
-    "maxDiscussionRounds": 3,
-    "maxReviewLoops": 3
-  },
-  "evaluation": {
-    "primaryMetric": "pass_rate",
-    "secondaryMetrics": ["latency", "cost", "stability"]
-  }
-}
-```
-
-### 12.2 CandidatePlan
-
-```json
-{
-  "candidateId": "candidate_01",
-  "name": "Tool-first hierarchical planner",
-  "hypothesis": "...",
-  "implementationSpec": "...",
-  "expectedBenefits": ["..."],
-  "risks": ["..."],
-  "requiredArtifacts": ["code", "metrics", "report"]
-}
-```
-
-### 12.3 AcceptanceSpec
-
-```json
-{
-  "hardGates": [
-    "code runs successfully",
-    "required experiment command is reproducible",
-    "report contains actual measured metrics",
-    "final solution outperforms baseline on primary metric"
-  ],
-  "softGates": [
-    "report explains failure modes",
-    "implementation is modular",
-    "cost is acceptable"
-  ],
-  "reviewThreshold": {
-    "hardGatePassRate": 1.0,
-    "minimumOverallScore": 0.8
-  }
-}
-```
-
-### 12.4 ExperimentReport
-
-```json
-{
-  "candidateId": "candidate_01",
-  "round": 2,
-  "summary": "...",
-  "implementationChanges": ["..."],
-  "commandsRun": ["pytest ...", "python train.py ..."],
-  "metrics": {
-    "primary": 0.73,
-    "secondary": {
-      "latency_ms": 420,
-      "cost_usd": 1.82
+  "run_id": "research_20260328_001",
+  "problem": "Improve agent planning quality for research tasks",
+  "acceptance_spec_path": "plan/acceptance_spec.json",
+  "round_index": 1,
+  "workers": {
+    "candidate_01": {
+      "owner": "worker_01",
+      "plan_name": "retrieval-first hierarchical planning",
+      "round": 1,
+      "status": "active",
+      "key_hypothesis": "planning improves when external papers are retrieved before decomposition",
+      "implementation_delta": [
+        "added retrieval step before plan generation",
+        "added ranked task decomposition prompt"
+      ],
+      "core_metrics": {
+        "primary_metric": 0.71,
+        "secondary_metrics": {
+          "latency_ms": 920,
+          "cost_usd": 0.84
+        }
+      },
+      "strengths": [
+        "strong literature grounding",
+        "stable decomposition quality"
+      ],
+      "weaknesses": [
+        "high latency",
+        "plan sometimes too conservative"
+      ],
+      "transferable_insights": [
+        "retrieval-first step helps reject weak ideas early",
+        "ranking criteria improves candidate filtering"
+      ],
+      "open_problems": [
+        "insufficient exploration diversity"
+      ],
+      "proposed_next_move": [
+        "inject diversity constraint into candidate generator"
+      ],
+      "private_report_path": "implementation/candidate_01/round_1/report.md"
     }
   },
-  "failures": ["..."],
-  "nextHypothesis": "..."
+  "peer_feedback": {
+    "candidate_02_on_candidate_01": {
+      "observed_strengths": [
+        "strong rejection filtering"
+      ],
+      "observed_weaknesses": [
+        "retrieval cost too high"
+      ],
+      "borrowable_ideas": [
+        "use lightweight retrieval only in planning phase"
+      ],
+      "suggested_improvement": [
+        "separate broad retrieval from deep retrieval"
+      ]
+    }
+  },
+  "global_findings": {
+    "dominant_strengths": [],
+    "dominant_failures": [],
+    "candidate_rank_hint": [],
+    "fusion_opportunities": []
+  }
 }
 ```
 
-### 12.5 ReviewVerdict
+## 8. Worker 的信息发布协议
+
+每个 Worker 在每轮结束时，必须执行两件事：
+
+1. 写完整私有报告到自己的目录。
+2. 抽取“关键协作信息”写入公共黑板。
+
+这意味着 Worker 的工作被拆成两层：
+
+### 8.1 私有输出层
+
+写入：
+
+- `implementation/candidate_xx/round_y/report.md`
+- `implementation/candidate_xx/round_y/metrics.json`
+- `implementation/candidate_xx/round_y/experiment.log`
+
+### 8.2 公共输出层
+
+只向 `worker_board.json` 更新自己对应的条目。
+
+公共输出只能包含：
+
+- 核心假设
+- 本轮关键改动
+- 主指标与必要副指标
+- 优势
+- 劣势
+- 可迁移洞见
+- 下一步建议
+- 私有报告路径
+
+### 8.3 为什么不能直接共享完整报告
+
+因为直接共享完整报告会导致四个问题：
+
+1. 信息过载
+   - Worker 很容易被其他方案的全量细节淹没。
+2. 协作失焦
+   - 讨论从“提炼强弱项”退化成“互相读长文”。
+3. 上下文成本过高
+   - 大模型处理多个完整报告会造成 token 和注意力浪费。
+4. 难以做结构化复用
+   - 完整报告不利于程序化识别可迁移结论。
+
+## 9. Worker 之间的讨论机制
+
+Worker 之间的协作必须通过“公共 JSON 黑板”进行，而不是互相发送全文。
+
+### 9.1 讨论原则
+
+每个 Worker 在开始下一轮前：
+
+1. 读取公共黑板中其他 Worker 的关键信息。
+2. 不读取其他 Worker 的完整报告正文，除非 Implementer 特批。
+3. 从公共黑板中识别：
+   - 谁在主指标上更强
+   - 谁的风险更低
+   - 谁的可迁移洞见更有价值
+4. 写出针对别人的结构化反馈。
+5. 基于这些反馈改造自己的方案。
+
+### 9.2 讨论不是自由聊天，而是结构化 peer analysis
+
+建议每个 Worker 每轮必须为每个其他 Worker 生成如下结构：
 
 ```json
 {
-  "status": "revise",
-  "overallScore": 0.67,
-  "hardGateResults": [
+  "observed_strengths": [],
+  "observed_weaknesses": [],
+  "borrowable_ideas": [],
+  "suggested_improvement": []
+}
+```
+
+这能保证讨论具有以下特征：
+
+- 可比对
+- 可聚合
+- 可进一步被 Implementer 抽象成群体共识
+
+### 9.3 讨论后的执行要求
+
+Worker 不能只“提出建议”而不落地。
+
+每轮讨论后，每个 Worker 必须明确回答：
+
+1. 本轮借鉴了哪些别人的点。
+2. 本轮拒绝了哪些建议，以及为什么。
+3. 本轮实际改动了哪些实现。
+4. 本轮实验结果是否变好。
+
+## 10. 动态多智能体系统，而不是状态机
+
+本方案明确不以状态机作为核心实现。
+
+### 10.1 为什么不采用状态机
+
+状态机的问题在于：
+
+1. 过于刚性
+   - 研究过程天然是动态的、会分叉的、会合并的。
+2. 不利于临时插入新任务
+   - 例如某轮讨论发现需要新对照实验。
+3. 不利于表达群体协作中的局部演化
+   - 不同 Worker 的节奏可能不完全同步。
+
+### 10.2 动态实现方式
+
+本系统建议采用“黑板 + 议程队列 + 角色技能协议”的动态模式。
+
+系统真正的推进变量不是“当前状态”，而是：
+
+1. 公共黑板里当前有哪些结论。
+2. 还有哪些待解决问题。
+3. 哪些 Worker 需要被继续迭代。
+4. 当前是否已满足验收标准。
+
+### 10.3 建议的动态控制变量
+
+可在共享目录中维护以下文件：
+
+- `shared/worker_board.json`
+- `shared/agenda.json`
+- `shared/review_feedback.json`
+- `shared/final_synthesis.json`
+
+其中：
+
+#### `agenda.json`
+
+负责描述当前还需要处理的任务，而不是系统状态。
+
+示例：
+
+```json
+{
+  "current_round": 2,
+  "active_candidates": [
+    "candidate_01",
+    "candidate_02",
+    "candidate_03"
+  ],
+  "priority_questions": [
+    "can candidate_02 borrow low-cost retrieval from candidate_01?",
+    "does candidate_03 need an additional baseline?"
+  ],
+  "required_actions": [
     {
-      "name": "code runs successfully",
-      "passed": true,
-      "evidence": "..."
+      "owner": "candidate_02",
+      "action": "reduce retrieval latency without harming planning quality"
     },
     {
-      "name": "outperforms baseline",
-      "passed": false,
-      "evidence": "..."
+      "owner": "candidate_03",
+      "action": "add baseline comparison and update metrics"
     }
-  ],
-  "mustFix": [
-    "baseline comparison missing",
-    "report metric source not traceable"
-  ],
-  "optionalImprovements": [
-    "add ablation for prompt format"
   ]
 }
 ```
 
-## 13. Agent 提示词契约
+也就是说：
 
-建议每个角色都使用固定的“系统提示词模板 + 结构化输出要求”。
+- 系统靠“下一步议程”推进
+- 而不是靠“状态迁移图”推进
 
-### 13.1 Planner Prompt Contract
+## 11. 三轮讨论与迭代如何动态实现
 
-Planner 必须输出：
+你的原始要求仍然保留：
 
-1. 问题重述
-2. 文献/项目检索摘要
-3. 可行性分析
-4. 3 到 5 个候选方案
-5. 验收标准
-6. 预算与风险
+- 系统至少进行三轮讨论和迭代
 
-禁止 Planner：
+但实现方式不是状态机，而是通过议程迭代。
 
-- 直接开始实现
-- 在没有证据时虚构指标
-
-### 13.2 Worker Prompt Contract
-
-Worker 必须输出：
-
-1. 方案理解
-2. 实现步骤
-3. 实验命令
-4. 结果指标
-5. 失败分析
-6. 下一轮改进建议
-
-禁止 Worker：
-
-- 跳过实验直接写结论
-- 引用未运行的结果为已验证结果
-
-### 13.3 Reviewer Prompt Contract
-
-Reviewer 必须输出：
-
-1. 验收项逐条核查结果
-2. 用到的工具证据
-3. 阻塞问题
-4. 是否通过
-5. 打回要求
-
-禁止 Reviewer：
-
-- 只给主观评价而不提供证据
-- 在未运行核验工具时声称已通过
-
-## 14. Implementer 的三轮讨论机制
-
-这是系统成败的关键部分。
-
-### 14.1 Round 0：初始并行实现
-
-每个 Worker 输出初始报告。
-
-### 14.2 Round 1：横向互评
+### 11.1 第 1 轮
 
 目标：
 
-- 找出各方案初版的明显优劣
+- 发现每个候选方案的初始强弱项
 
-每个 Worker 需要：
+执行：
 
-1. 阅读其他候选报告
-2. 指出自己可以借鉴的点
-3. 指出其他方案的潜在漏洞
-4. 提出下一轮改动计划
+1. Worker 完成初版实现与实验。
+2. Worker 更新公共黑板。
+3. 所有 Worker 读取公共黑板并写 peer feedback。
+4. Implementer 从黑板中提取群体共识，更新 `agenda.json`。
 
-### 14.3 Round 2：优势迁移
-
-目标：
-
-- 将不同方案中的有效策略迁移到各自实现中
-
-可能动作：
-
-- 把某方案的数据预处理策略迁移过来
-- 引入另一个方案更稳定的评估脚本
-- 组合两个方案的模块
-
-### 14.4 Round 3：收敛优化
+### 11.2 第 2 轮
 
 目标：
 
-- 缩小方案差异
-- 确定最终最优方案或融合方案
+- 借鉴强项，修复明显缺陷
 
-这一轮更偏“收敛”，而不是继续大幅发散探索。
+执行：
 
-### 14.5 讨论主持者
+1. Worker 根据 `agenda.json` 改造各自方案。
+2. 重新实验并更新黑板。
+3. 其他 Worker 再次基于黑板判断是否真正改善。
+4. Implementer 提炼可融合的模式。
 
-建议由 Implementer 内部的 `DiscussionCoordinator` 负责：
+### 11.3 第 3 轮
 
-1. 汇总每轮 cross-review
-2. 提取一致结论
-3. 识别冲突点
-4. 给每个 Worker 下发下一轮行动指令
+目标：
 
-## 15. Reviewer 的验收方法
+- 收敛到当前最优解或融合解
 
-Reviewer 不能只是“读报告”，必须使用工具做核查。
+执行：
 
-建议 Reviewer 的核查流程：
+1. Worker 聚焦少数高价值改动。
+2. Implementer 提取最强要素组合。
+3. 形成最优候选或融合候选。
 
-1. `read_file`
-   - 检查报告、配置、指标文件是否存在且一致
-2. `list_dir`
-   - 检查最终交付目录结构是否完整
-3. `exec`
-   - 复现关键命令
-4. `read_file` + `exec`
-   - 比对报告中的指标与实际输出
-5. `web_fetch` / `web_search`
-   - 必要时核查外部 baseline 或 benchmark 定义
+### 11.4 动态扩展
 
-Reviewer 的最终结论必须依赖：
+虽然基础设计要求 3 轮，但实现上应允许：
 
-- 工具证据
-- 明确标准
-- 可追溯的文件路径
+- 在评审打回后再次启动新的议程轮
+- 继续使用同一套黑板机制
 
-## 16. 最优解的工程定义
+也就是说：
 
-“最优解”在系统中不应被定义为绝对真理，而应被定义为：
+- 三轮是默认协作轮
+- 不是僵硬的系统状态边界
 
-- 在当前轮次、预算、约束和验收标准下，
-- 所有候选方案及其 3 轮迭代后，
-- 通过 Reviewer 验收，
-- 并在主指标和关键副指标上最优或综合最优的方案。
+## 12. 角色设计
 
-建议使用如下决策规则：
+### 12.1 Planner 主 Agent
 
-1. 先看硬门槛是否全过。
-2. 再看主指标。
-3. 主指标接近时比较：
-   - 稳定性
-   - 复现性
-   - 成本
-   - 复杂度
-4. 必要时允许融合方案胜出。
+Planner 的职责：
 
-## 17. 对 nanobot 的具体扩展建议
+1. 基于用户模糊需求做研究检索。
+2. 形成问题重述。
+3. 生成 3 到 5 个候选方案。
+4. 为每个方案生成：
+   - 目标
+   - 关键假设
+   - 实现方向
+   - 关键风险
+5. 输出统一验收标准。
+6. 初始化共享目录与公共文件。
 
-建议新增以下模块。
+Planner 主要依赖的现有工具：
 
-### 17.1 新目录
+- `web_search`
+- `web_fetch`
+- `read_file`
+- `write_file`
+- `edit_file`
+
+Planner 输出：
+
+- `plan/plan_brief.md`
+- `plan/candidates.json`
+- `plan/acceptance_spec.json`
+- `shared/worker_board.json`
+- `shared/agenda.json`
+
+### 12.2 Implementer 主 Agent
+
+Implementer 的职责：
+
+1. 读取 `candidates.json`。
+2. 用现有 `spawn` 工具拉起与候选方案数量相等的 Worker Agents。
+3. 要求每个 Worker：
+   - 只在自己的目录工作
+   - 写完整私有报告
+   - 只把关键信息写到黑板
+4. 在每一轮之后：
+   - 汇总黑板
+   - 提炼优势与弱点
+   - 写入新的 `agenda.json`
+5. 三轮后形成最优候选或融合方案。
+6. 将最终结果提交给 Reviewer。
+
+Implementer 主要依赖的现有工具：
+
+- `spawn`
+- `read_file`
+- `write_file`
+- `edit_file`
+- `list_dir`
+- `exec`
+
+### 12.3 Worker Agent
+
+每个 Worker 只负责一个候选方案。
+
+Worker 的职责：
+
+1. 读取自己负责的候选方案说明。
+2. 在私有目录实现代码。
+3. 运行实验。
+4. 生成完整实验报告。
+5. 抽取关键协作信息到公共黑板。
+6. 读取其他 Worker 的黑板条目。
+7. 生成结构化 peer feedback。
+8. 基于 peer feedback 改进自己的方案。
+
+Worker 使用的工具：
+
+- `read_file`
+- `write_file`
+- `edit_file`
+- `list_dir`
+- `exec`
+- 必要时 `web_search` / `web_fetch`
+
+### 12.4 Reviewer 主 Agent
+
+Reviewer 的职责：
+
+1. 读取验收标准。
+2. 读取最终综合结果。
+3. 使用工具复核实现与实验。
+4. 判断是否达标。
+5. 若不达标，生成结构化打回要求。
+
+Reviewer 使用的工具：
+
+- `read_file`
+- `list_dir`
+- `exec`
+- 必要时 `web_fetch`
+
+Reviewer 输出：
+
+- `review/review_report.md`
+- `review/review_feedback.json`
+
+## 13. 只基于 Skills 的实现策略
+
+由于不能改核心架构，所以整个系统必须主要由 Skills 实现。
+
+建议新增以下 Skills：
+
+### 13.1 `research-planner`
+
+作用：
+
+- 规范 Planner 如何做检索、可行性分析、方案拆解、验收标准编写。
+
+### 13.2 `research-implementer`
+
+作用：
+
+- 规范 Implementer 如何启动 Worker、如何维护黑板、如何更新议程。
+
+### 13.3 `research-worker`
+
+作用：
+
+- 规范 Worker 如何：
+  - 实现方案
+  - 写私有报告
+  - 提炼关键摘要
+  - 阅读公共黑板
+  - 写 peer feedback
+  - 根据反馈改进
+
+### 13.4 `research-reviewer`
+
+作用：
+
+- 规范 Reviewer 如何基于验收标准用工具审查。
+
+### 13.5 `research-blackboard`
+
+作用：
+
+- 规范公共 JSON 黑板的字段、写入规则、冲突处理规则。
+
+### 13.6 `research-report-digest`
+
+作用：
+
+- 规范如何从完整实验报告中抽取关键协作信息，而不是直接外发全文。
+
+## 14. Skill 目录建议
+
+不修改核心代码的前提下，建议在 workspace 或 skills 目录中增加如下内容：
 
 ```text
-nanobot/research/
-  __init__.py
-  models.py
-  orchestrator.py
-  state.py
-  store.py
-  planner.py
-  implementer.py
-  reviewer.py
-  discussion.py
-  prompts.py
-  evaluator.py
+workspace/
+  skills/
+    research-planner/
+      SKILL.md
+    research-implementer/
+      SKILL.md
+    research-worker/
+      SKILL.md
+    research-reviewer/
+      SKILL.md
+    research-blackboard/
+      SKILL.md
+    research-report-digest/
+      SKILL.md
 ```
 
-### 17.2 建议新增的核心类
+如果允许增加 skills 附带脚本，可再加入：
 
-#### ResearchWorkflowManager
+```text
+workspace/
+  skills/
+    research-blackboard/
+      SKILL.md
+      scripts/
+        validate_board.py
+        merge_feedback.py
+        rank_candidates.py
+```
 
-职责：
+这里的脚本不是核心架构修改，而是技能配套辅助脚本，调用方式仍然通过现有 `exec` 工具完成。
 
-- 驱动整个 run 的生命周期
-- 管理状态机
-- 调用 Planner / Implementer / Reviewer
-- 处理 revise loop
+## 15. 黑板写入规则
 
-#### ResearchProjectStore
+为了避免多个 Worker 互相覆盖公共 JSON，必须定义严格的写入协议。
 
-职责：
+### 15.1 每个 Worker 只拥有自己的写入槽位
 
-- 负责所有工件落盘
-- 保存索引与状态
-- 提供按 run 查询能力
+例如：
 
-#### PlannerAgent
+- `workers.candidate_01.*` 只允许 `candidate_01` 自己改
+- `workers.candidate_02.*` 只允许 `candidate_02` 自己改
 
-职责：
+### 15.2 peer feedback 单独命名
 
-- 基于 `AgentRunner` 封装规划流程
+例如：
 
-#### ImplementerAgent
+- `peer_feedback.candidate_02_on_candidate_01`
 
-职责：
+这样可以清楚知道：
 
-- 启动 Worker
-- 汇总报告
-- 组织 3 轮讨论
-- 决定最终候选
+- 谁评价了谁
+- 评价内容是什么
 
-#### ReviewerAgent
+### 15.3 全局发现由 Implementer 汇总
 
-职责：
+例如：
 
-- 基于验收标准调用工具完成评审
+- `global_findings`
+- `fusion_opportunities`
+- `candidate_rank_hint`
 
-#### DiscussionCoordinator
+这些字段只由 Implementer 更新。
 
-职责：
+### 15.4 黑板冲突处理
 
-- 汇总 cross-review
-- 给出下一轮迭代指令
+若出现写入冲突，建议使用以下协议：
 
-### 17.3 为什么不建议直接改造 `spawn` 即完成全部需求
+1. Worker 先读最新版本。
+2. 只修改自己拥有的字段。
+3. 写入前再次校验。
+4. 若结构损坏，则运行黑板修复脚本或由 Implementer 修复。
 
-原因不是 `spawn` 不好，而是职责不同。
+## 16. 目录与工件设计
 
-`spawn` 更适合：
+建议在 workspace 下创建独立运行目录：
 
-- 后台长任务
-- 辅助性子问题
-- 完成后再通知主 Agent
+```text
+research_runs/
+  <run_id>/
+    plan/
+      plan_brief.md
+      candidates.json
+      acceptance_spec.json
+    shared/
+      worker_board.json
+      agenda.json
+      review_feedback.json
+      final_synthesis.json
+    implementation/
+      candidate_01/
+        round_1/
+          report.md
+          metrics.json
+          notes.md
+        round_2/
+          report.md
+          metrics.json
+          notes.md
+        round_3/
+          report.md
+          metrics.json
+          notes.md
+      candidate_02/
+      candidate_03/
+    synthesis/
+      best_candidate.json
+      fusion_rationale.md
+      final_report.md
+    review/
+      review_report.md
+      review_feedback.json
+    deliverables/
+      final_summary.md
+      final_summary.json
+```
 
-本系统需要的是：
+## 17. 动态议程机制
 
-- 可追踪的多角色状态机
-- 结构化工件保存
-- 多轮协作与审查
-- 可回退和可复现
+整个系统不应维护“状态迁移图”，而应维护“下一步要干什么”的议程。
 
-所以建议：
+### 17.1 议程的内容
 
-- `spawn` 保留
-- 研究系统使用独立 orchestrator
-- orchestrator 内部可复用 `AgentRunner`
+`agenda.json` 中只需要描述：
 
-## 18. 配置设计建议
+1. 当前轮次
+2. 当前活跃候选
+3. 当前优先问题
+4. 每个 Worker 下一步的重点动作
+5. 是否已达到送审条件
 
-建议在 `config.json` 中新增：
+示例：
 
 ```json
 {
-  "research": {
-    "enabled": true,
-    "plannerModel": "anthropic/claude-opus-4-5",
-    "implementerModel": "anthropic/claude-opus-4-5",
-    "workerModel": "anthropic/claude-sonnet-4-5",
-    "reviewerModel": "anthropic/claude-opus-4-5",
-    "candidateCountMin": 3,
-    "candidateCountMax": 5,
-    "discussionRounds": 3,
-    "maxReviewLoops": 3,
-    "parallelWorkers": 5,
-    "reviewExecEnabled": true,
-    "artifactRoot": "~/.nanobot/workspace/research_runs"
+  "round_index": 2,
+  "ready_for_review": false,
+  "active_candidates": [
+    "candidate_01",
+    "candidate_02",
+    "candidate_03"
+  ],
+  "priority_questions": [
+    "which retrieval pattern gives the best cost-performance ratio?",
+    "can candidate_03 absorb candidate_01's filtering strategy?"
+  ],
+  "worker_actions": {
+    "candidate_01": [
+      "keep retrieval-first design but lower latency"
+    ],
+    "candidate_02": [
+      "borrow candidate_03's ranking heuristic"
+    ],
+    "candidate_03": [
+      "run extra baseline comparison"
+    ]
   }
 }
 ```
 
-## 19. CLI 入口设计建议
+### 17.2 议程的好处
 
-建议新增命令：
+相比状态机，议程更适合科研系统，因为：
 
-```bash
-nanobot research run -m "..." 
-nanobot research resume <run_id>
-nanobot research status <run_id>
-nanobot research review <run_id>
-nanobot research export <run_id>
+1. 可以灵活插入临时实验。
+2. 可以允许部分 Worker 先走一步。
+3. 可以在打回后直接继续下一个议程，而不是重走状态转换。
+4. 更符合“问题驱动”的研究实践。
+
+## 18. Planner 的详细工作流
+
+Planner 的标准流程应为：
+
+1. 接收模糊研究目标。
+2. 通过 `web_search` 检索论文、项目、benchmark、实现思路。
+3. 通过 `web_fetch` 抓取关键页面。
+4. 形成可行性分析。
+5. 决定 3 到 5 个候选方案。
+6. 为每个方案生成：
+   - 方案标题
+   - 核心假设
+   - 实现重点
+   - 预期优势
+   - 主要风险
+7. 写出 `acceptance_spec.json`。
+8. 初始化黑板和议程。
+
+## 19. Implementer 的详细工作流
+
+Implementer 的核心不是“自己实现”，而是“组织一群 Worker 实现并持续比较”。
+
+建议流程：
+
+1. 读取 `candidates.json`。
+2. 为每个候选方案创建私有目录。
+3. 通过 `spawn` 启动等数量的 Worker。
+4. 传给每个 Worker：
+   - 自己负责的 candidate id
+   - 私有目录路径
+   - 黑板路径
+   - 议程路径
+   - 当前轮次要求
+5. 等待 Worker 完成本轮输出。
+6. 汇总黑板，提炼：
+   - 共同优势
+   - 共同失败
+   - 可借鉴技巧
+   - 潜在融合机会
+7. 更新 `agenda.json`。
+8. 继续下一轮。
+9. 三轮后选择最优候选或构造融合候选。
+10. 组织最终综合报告并送 Reviewer。
+
+## 20. Worker 的详细工作流
+
+每个 Worker 在每一轮都遵循同一协议。
+
+### 20.1 本轮开始前
+
+读取：
+
+- 自己的方案说明
+- 当前轮次议程
+- 公共黑板中其他 Worker 的最新条目
+
+### 20.2 实现与实验
+
+执行：
+
+1. 修改代码或实验配置。
+2. 运行实验。
+3. 记录结果。
+4. 写完整私有报告。
+
+### 20.3 摘要抽取
+
+从完整报告中抽取协作级摘要，只保留：
+
+- 最关键假设
+- 本轮关键改动
+- 主指标
+- 主要优势
+- 主要弱点
+- 可迁移经验
+- 下一步建议
+
+### 20.4 同行分析
+
+基于黑板读取其他 Worker 的摘要后：
+
+1. 判断别人的强项是什么。
+2. 判断别人的弱点是什么。
+3. 判断哪些点值得借鉴。
+4. 判断如何把这些点转化成自己下一轮的改进动作。
+
+### 20.5 黑板更新
+
+更新：
+
+- 自己的 `workers.<candidate_id>` 条目
+- 自己对别人的 `peer_feedback.*` 条目
+
+## 21. Reviewer 的详细工作流
+
+Reviewer 主 Agent 只做一件事：
+
+- 根据验收标准，用工具做客观核查
+
+### 21.1 Reviewer 的输入
+
+- `plan/acceptance_spec.json`
+- `synthesis/final_report.md`
+- `deliverables/`
+- `shared/worker_board.json`
+- 必要的私有实验产物路径
+
+### 21.2 Reviewer 的审查方式
+
+Reviewer 必须用现有工具完成核查：
+
+1. `read_file`
+   - 检查验收标准、最终报告、指标文件
+2. `list_dir`
+   - 检查交付是否完整
+3. `exec`
+   - 复现关键实验或至少复现关键评测脚本
+4. `read_file + exec`
+   - 对比报告中的结论与实际输出
+
+### 21.3 评审结果
+
+如果通过：
+
+- 写 `review/review_report.md`
+- 写 `review/review_feedback.json`
+- 标明 `approved: true`
+
+如果不通过：
+
+- 写 `review/review_feedback.json`
+- 明确 `must_fix`
+- Implementer 读取后继续发起下一轮议程
+
+## 22. 验收标准设计
+
+Planner 必须先定义验收标准，Reviewer 只能按标准审查。
+
+建议标准结构如下：
+
+```json
+{
+  "hard_requirements": [
+    "final code can run",
+    "main experiment can be reproduced",
+    "report uses actual measured metrics",
+    "best solution outperforms baseline or clearly justifies failure"
+  ],
+  "soft_requirements": [
+    "solution is modular",
+    "discussion rounds produce meaningful improvement",
+    "shared blackboard records transferable insights"
+  ],
+  "review_checks": [
+    {
+      "name": "reproduce_main_metric",
+      "tool": "exec",
+      "required": true
+    },
+    {
+      "name": "verify_report_metric_consistency",
+      "tool": "read_file",
+      "required": true
+    }
+  ]
+}
 ```
 
-### 19.1 `nanobot research run`
+## 23. Skills 中的角色协议建议
 
-功能：
+### 23.1 `research-planner` 的协议重点
 
-- 创建新 run
-- 执行 Planner
-- 启动 Implementer
-- 自动进入 Reviewer
+Planner 必须做到：
 
-### 19.2 `nanobot research resume`
+1. 先检索再拆解。
+2. 生成多个候选，而不是单方案直冲。
+3. 验收标准必须早于实现阶段。
 
-功能：
+### 23.2 `research-worker` 的协议重点
 
-- 从某次中断继续
+Worker 必须做到：
 
-### 19.3 `nanobot research status`
+1. 完整报告写私有目录。
+2. 公共黑板只写关键协作信息。
+3. 下一轮改进必须明确说明：
+   - 借鉴了谁
+   - 借鉴了什么
+   - 为什么借鉴
 
-功能：
+### 23.3 `research-reviewer` 的协议重点
 
-- 查看当前阶段、轮次、候选方案状态、是否通过评审
+Reviewer 必须做到：
 
-## 20. 一次典型运行示例
+1. 用工具核查，不凭主观放行。
+2. 不合格时必须给出可执行打回项。
+3. 结论必须可追踪到文件与命令。
 
-输入：
+## 24. 为什么该方案是“动态多智能体系统”
+
+它的动态性体现在：
+
+1. 候选数量由 Planner 在 3 到 5 之间动态决定。
+2. Worker 之间的信息交互不是固定 pipeline，而是基于黑板当前内容动态发生。
+3. 议程内容会随实验结果动态变化。
+4. 打回后可以进入新的协作议程，而不是固定状态回退。
+5. Implementer 可以根据黑板判断：
+   - 保留哪个候选
+   - 弱化哪个候选
+   - 是否需要融合两个候选的优点
+
+因此，这套系统的核心是：
+
+- 公共知识黑板驱动的群体演化
+
+而不是：
+
+- 一个写死的阶段状态机
+
+## 25. 最优解如何产生
+
+最优解不应当来自“某个 Worker 自称自己最好”，而应当来自以下综合过程：
+
+1. 各 Worker 的本轮指标
+2. 各 Worker 在黑板上的强弱项
+3. 同行反馈中反复被认可的可迁移技巧
+4. Implementer 对群体模式的综合判断
+5. Reviewer 的最终验收结果
+
+建议最优解的形成方式有两种：
+
+### 25.1 单候选胜出
+
+如果某个候选：
+
+- 主指标最好
+- 风险较小
+- 被同行多次认可其关键设计
+
+则该候选直接成为最优解。
+
+### 25.2 融合候选胜出
+
+如果不同候选在不同维度有明显优势：
+
+- 候选 A 的检索好
+- 候选 B 的实验稳定
+- 候选 C 的成本低
+
+那么 Implementer 可以组织生成一个融合解。
+
+融合解的来源依据必须来自黑板中被反复验证的“transferable_insights”，而不是凭空组合。
+
+## 26. 不修改核心架构的实现建议
+
+本节直接回答如何“真正落地”且不改核心代码。
+
+### 26.1 允许做的事
+
+可以做：
+
+1. 新增 Skills。
+2. 修改 Skills。
+3. 在 Skills 目录中新增辅助脚本。
+4. 通过现有工具读写共享 JSON。
+5. 用现有 `spawn` 拉起 Worker。
+
+### 26.2 不允许做的事
+
+不应做：
+
+1. 修改 `AgentLoop`
+2. 修改 `SubagentManager`
+3. 修改 `AgentRunner`
+4. 修改 `SessionManager`
+5. 修改核心 CLI 框架
+6. 新增依赖核心注册逻辑的新内建机制
+
+### 26.3 如果需要辅助能力怎么办
+
+如果协作需要辅助功能，例如：
+
+- 黑板校验
+- peer feedback 合并
+- 候选排序
+
+应当通过以下方式解决：
+
+1. 在 Skill 附带脚本中实现
+2. 由 Agent 用现有 `exec` 调用脚本
+3. 仍通过现有 `read_file` / `write_file` / `edit_file` 管理工件
+
+这样就能在“不改内核”的前提下扩展能力。
+
+## 27. 推荐的技能化落地方案
+
+建议分为两层：
+
+### 27.1 角色技能
+
+- `research-planner`
+- `research-implementer`
+- `research-worker`
+- `research-reviewer`
+
+### 27.2 协议技能
+
+- `research-blackboard`
+- `research-report-digest`
+- `research-peer-feedback`
+- `research-final-synthesis`
+
+角色技能告诉 Agent：
+
+- 你是谁
+- 你该做什么
+
+协议技能告诉 Agent：
+
+- 你该如何与其他 Agent 交换信息
+
+## 28. 一次完整运行示例
+
+输入需求：
 
 ```text
-设计一个多智能体代码研究系统，用于提升 bug fixing 任务的成功率。
+请设计一套多智能体科研系统，自动探索提升代码研究任务规划质量的方法。
 ```
 
-系统可能执行：
-
-1. Planner 检索相关工作：
-   - self-refine
-   - multi-agent debate
-   - planner-executor-reviewer
-   - code benchmark practices
-2. Planner 生成 4 个方案：
-   - 层次规划
-   - 多路径并行修复
-   - 工具驱动检索增强
-   - 讨论式 patch 合成
-3. Implementer 启动 4 个 Worker：
-   - 每个 Worker 在独立目录做实现
-4. 每个 Worker 运行 benchmark 并生成报告
-5. 进入 3 轮讨论
-6. Implementer 选择“讨论式 patch 合成 + 检索增强”的融合方案
-7. Reviewer 复现关键 benchmark，发现缺失 baseline 对照
-8. 打回
-9. Implementer 增补 baseline 实验后重新提交
-10. Reviewer 通过，输出最终报告
-
-## 21. 失败处理与鲁棒性设计
-
-### 21.1 Worker 失败
-
-若某个 Worker 失败：
-
-- 标记该候选方案状态为 `failed`
-- 仍允许其他候选继续
-- 若失败方案过多，可由 Implementer 触发补位候选
-
-### 21.2 工具失败
-
-工具失败时：
-
-- 保存失败命令
-- 保存 stderr / stdout 摘要
-- 在下一轮讨论中显式纳入“失败原因分析”
-
-### 21.3 Reviewer 无法复现
-
-若 Reviewer 无法复现：
-
-- 默认不通过
-- 生成 `mustFix`
-- 要求 Implementer 补充脚本、环境说明或修复实验
-
-## 22. 成本与预算控制
-
-为避免系统无限讨论，建议加入预算控制：
-
-1. 最大候选数：5
-2. 固定讨论轮数：3
-3. 最大 reviewer 回退次数：3
-4. 每轮最大工具调用预算
-5. 每个 Worker 最大 token 预算
-
-超预算时的策略：
-
-- 优先停止低分候选
-- 压缩讨论轮输入
-- 降级模型
-
-## 23. 记忆设计
-
-不建议把单个 run 的所有细节都写入长期记忆。
-
-建议分层：
-
-1. 会话级记忆
-   - 当前 run 的详细过程
-2. 项目级工件
-   - `research_runs/<run_id>/...`
-3. 长期记忆
-   - 只保存通用经验，例如：
-     - 哪类方案常失败
-     - 哪类 benchmark 命令最稳定
-     - 哪些评审规则最有效
-
-## 24. MVP 实施路线
-
-建议分三期做，而不是一次做满。
-
-### Phase 1：最小可用版本
-
-只实现：
-
-1. Planner
-2. 3 个候选方案 Worker 并行
-3. 固定 3 轮讨论
-4. Reviewer 基础验收
-5. 工件落盘
-
-此阶段先不做：
-
-- 多 channel 集成
-- 长期记忆优化
-- 自动预算重分配
-- 可视化 dashboard
-
-### Phase 2：增强版
-
-加入：
-
-1. 状态恢复
-2. 更强的指标对比
-3. 更丰富的评审器
-4. 候选方案淘汰机制
-
-### Phase 3：生产版
-
-加入：
-
-1. Web UI / Dashboard
-2. 人工插入节点
-3. 多 run 对比
-4. 自动经验沉淀
-
-## 25. 关键实现建议
-
-### 25.1 角色运行内核
-
-每个角色都建议基于 `AgentRunner` 运行，而不是复制 `AgentLoop` 逻辑。
-
-原因：
-
-- `AgentRunner` 更轻
-- 可单次执行
-- 易于做角色隔离
-
-### 25.2 工具权限
-
-建议：
-
-- Planner：
-  - `web_search`
-  - `web_fetch`
-  - `read_file`
-- Worker：
-  - `read_file`
-  - `write_file`
-  - `edit_file`
-  - `list_dir`
-  - `exec`
-- Reviewer：
-  - `read_file`
-  - `list_dir`
-  - `exec`
-  - 必要时 `web_fetch`
-
-### 25.3 独立工作目录
-
-强烈建议每个候选方案使用独立目录，避免多个 Worker 互相覆盖文件。
-
-### 25.4 结构化输出优先
-
-所有角色尽量输出 JSON + Markdown 双版本。
-
-原因：
-
-- JSON 便于程序继续处理
-- Markdown 便于人阅读
-
-## 26. 风险与应对
-
-### 风险 1：角色串味
-
-现象：
-
-- 实现者开始替评审放水
-
-应对：
-
-- 强角色 prompt
-- 独立上下文
-- Reviewer 独立运行
-
-### 风险 2：讨论流于空谈
-
-现象：
-
-- 讨论只有语言，没有实验增量
-
-应对：
-
-- 每轮必须重新提交：
-  - 改动说明
-  - 新实验结果
-  - 与上一轮差异
-
-### 风险 3：报告与真实结果不一致
-
-应对：
-
-- Reviewer 必须复现关键命令
-- 指标必须有文件证据
-
-### 风险 4：成本过高
-
-应对：
-
-- 先做 3 候选方案
-- 固定 3 轮
-- 提前淘汰明显落后方案
-
-## 27. 最终推荐方案
-
-综合当前 `nanobot` 架构与目标需求，推荐的实现路线是：
-
-1. 不推翻现有 `nanobot` Agent 架构。
-2. 在其上新增 `research` 领域层。
-3. 以 `PlannerAgent + ImplementerAgent + ReviewerAgent` 为主干。
-4. 以多个 Worker Agent 承接并行候选实现。
-5. 借鉴 ColaCare 的“并行专家 + 汇总者 + 3 轮协作”模式。
-6. 用结构化工件和状态机保证可复现、可审计、可回退。
-
-这是目前最符合 `nanobot` 现有实现、改动面可控、且能够真实落地的方案。
-
-## 28. 参考资料
-
-1. nanobot 当前仓库关键模块：
-   - `nanobot/agent/loop.py`
-   - `nanobot/agent/runner.py`
+系统流程：
+
+1. Planner 检索相关论文与项目。
+2. Planner 生成 4 个候选方案。
+3. Planner 写出 `acceptance_spec.json`、`worker_board.json`、`agenda.json`。
+4. Implementer 用 `spawn` 拉起 4 个 Worker。
+5. 每个 Worker 在自己的目录实现并实验。
+6. 每个 Worker 只把关键摘要写入 `worker_board.json`。
+7. 其余 Worker 读取黑板，写入结构化 `peer_feedback`。
+8. Implementer 汇总黑板，写出下一轮议程。
+9. 重复三轮。
+10. Implementer 形成最优候选或融合候选。
+11. Reviewer 用 `exec` 与 `read_file` 做验收。
+12. 若不通过，则 Reviewer 写 `review_feedback.json`。
+13. Implementer 读取打回项，继续组织下一轮议程。
+14. 若通过，则输出最终交付。
+
+## 29. 该方案相对旧版设计的修正点
+
+相较于旧版设计，本版做了以下关键修正：
+
+1. 删除了对核心架构扩展层的依赖。
+2. 删除了以状态机为核心的实现方式。
+3. 不再建议新增研究编排 Python 核心模块。
+4. 将系统实现重心转移到 `tools + skills + 共享工件协议`。
+5. 强化了“Worker 不共享全文，只共享关键信息”的机制。
+6. 明确引入公共 JSON 黑板作为协作中心。
+7. 强调用动态议程而不是状态图来推进群体协作。
+
+## 30. 最终推荐方案
+
+在你给出的约束下，最合理、最稳妥、且真正能落到当前 `nanobot` 上的方案是：
+
+1. 保持 `nanobot` 核心运行时完全不动。
+2. 使用现有 `spawn + 文件工具 + exec + web 工具 + skills`。
+3. 通过 Skills 定义 Planner / Implementer / Worker / Reviewer 四类角色协议。
+4. 通过 `worker_board.json` 构建 Worker 间的公共协作黑板。
+5. 通过 `agenda.json` 驱动动态协作，而不是状态机。
+6. 通过“完整私有报告 + 公共关键摘要”实现信息隔离与协作复用。
+7. 通过 Reviewer 基于工具的验收实现闭环打回。
+
+这是一套真正符合“不能改核心架构、只能基于 tools 与 skills 设计”的动态多智能体科研系统方案。
+
+## 31. 参考资料
+
+1. nanobot 当前能力边界：
    - `nanobot/agent/subagent.py`
    - `nanobot/agent/tools/spawn.py`
+   - `nanobot/agent/runner.py`
+   - `nanobot/agent/loop.py`
    - `nanobot/session/manager.py`
 2. ColaCare 仓库：
    - https://github.com/PKU-AICare/ColaCare
