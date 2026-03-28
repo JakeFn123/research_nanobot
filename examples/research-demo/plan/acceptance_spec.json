@@ -1,0 +1,24 @@
+{
+  "hard_requirements": [
+    "shared board can be initialized",
+    "worker digests can be published",
+    "peer feedback can be merged",
+    "agenda can be generated from board findings"
+  ],
+  "soft_requirements": [
+    "global findings identify strengths and failures",
+    "worker actions reflect peer feedback"
+  ],
+  "review_checks": [
+    {
+      "name": "validate_board_shape",
+      "tool": "exec",
+      "required": true
+    },
+    {
+      "name": "generate_next_agenda",
+      "tool": "exec",
+      "required": true
+    }
+  ]
+}

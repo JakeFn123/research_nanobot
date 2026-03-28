@@ -1,0 +1,30 @@
+[
+  {
+    "candidateId": "candidate_01",
+    "name": "Retrieval-first planning",
+    "hypothesis": "Adding retrieval before decomposition improves plan quality.",
+    "implementationSpec": "Build a planner that retrieves papers before drafting candidate plans.",
+    "expectedBenefits": [
+      "better grounding",
+      "stronger rejection of weak ideas"
+    ],
+    "risks": [
+      "higher latency",
+      "extra retrieval cost"
+    ]
+  },
+  {
+    "candidateId": "candidate_02",
+    "name": "Ranking-first planning",
+    "hypothesis": "A lightweight ranking heuristic can keep quality high at lower cost.",
+    "implementationSpec": "Build a planner that scores candidate plans with a cheap ranking heuristic.",
+    "expectedBenefits": [
+      "lower latency",
+      "lower cost"
+    ],
+    "risks": [
+      "weaker evidence grounding",
+      "more false positives"
+    ]
+  }
+]

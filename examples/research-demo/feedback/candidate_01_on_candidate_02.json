@@ -1,0 +1,14 @@
+{
+  "observed_strengths": [
+    "cheap ranking makes iteration fast"
+  ],
+  "observed_weaknesses": [
+    "weak evidence support leads to unstable plan quality"
+  ],
+  "borrowable_ideas": [
+    "keep the cheap ranking stage before deep evidence use"
+  ],
+  "suggested_improvement": [
+    "add one selective retrieval step after ranking"
+  ]
+}
