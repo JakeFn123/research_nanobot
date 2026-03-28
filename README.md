@@ -47,6 +47,45 @@ nanobot agent
 nanobot gateway
 ```
 
+## 🧪 科研多智能体系统 MVP
+
+> [!TIP]
+> 详细设计与当前实现说明见：[docs/RESEARCH_MULTI_AGENT_SYSTEM_DESIGN_ZH.md](./docs/RESEARCH_MULTI_AGENT_SYSTEM_DESIGN_ZH.md)
+
+当前仓库已经加入一版基于现有 `tools + skills + spawn` 的科研多智能体协议层 MVP，特点是：
+
+- 不修改 `nanobot` 核心运行时
+- 通过 Skills 定义 `Planner / Implementer / Worker / Reviewer`
+- 通过 `shared/worker_board.json` 做 Worker 之间的关键信息协作
+- 通过 `shared/agenda.json` 推动动态迭代，而不是状态机
+- Worker 保留完整私有报告，只共享结构化摘要
+
+当前已实现的关键 skills：
+
+- `research-planner`
+- `research-implementer`
+- `research-worker`
+- `research-reviewer`
+- `research-blackboard`
+- `research-report-digest`
+
+当前已实现的关键脚本：
+
+- `init_research_run.py`
+- `digest_report.py`
+- `upsert_worker_entry.py`
+- `add_peer_feedback.py`
+- `synthesize_findings.py`
+- `generate_agenda.py`
+
+最小使用链路：
+
+```bash
+python nanobot/skills/research-blackboard/scripts/init_research_run.py --help
+python nanobot/skills/research-report-digest/scripts/digest_report.py --help
+python nanobot/skills/research-blackboard/scripts/generate_agenda.py --help
+```
+
 ## 📢 News
 
 > [!IMPORTANT]
@@ -135,6 +174,7 @@ nanobot gateway
 
 - [中文新手指南（EASY_START_GUIDE）](./EASY_START_GUIDE.md)
 - [中文快速上手](#-中文快速上手)
+- [科研多智能体系统 MVP](#-科研多智能体系统-mvp)
 - [News](#-news)
 - [Key Features](#key-features-of-nanobot)
 - [Architecture](#️-architecture)

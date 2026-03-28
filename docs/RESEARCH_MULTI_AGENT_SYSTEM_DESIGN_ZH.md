@@ -17,6 +17,137 @@
 
 因此，这份文档不是“如何给 nanobot 增加一个新的研究引擎”，而是“如何在不改核心架构的前提下，用现有 `tools + skills + spawn` 搭建一个动态科研多智能体工作流”。
 
+## 1.1 当前实现状态
+
+本仓库当前已经完成了第一版可运行的协议层 MVP，实现范围严格限制在 `skills + scripts + tests`：
+
+### 已实现的 Skills
+
+- `nanobot/skills/research-planner/SKILL.md`
+- `nanobot/skills/research-implementer/SKILL.md`
+- `nanobot/skills/research-worker/SKILL.md`
+- `nanobot/skills/research-reviewer/SKILL.md`
+- `nanobot/skills/research-blackboard/SKILL.md`
+- `nanobot/skills/research-report-digest/SKILL.md`
+
+### 已实现的 Blackboard Scripts
+
+- `nanobot/skills/research-blackboard/scripts/init_research_run.py`
+- `nanobot/skills/research-blackboard/scripts/validate_board.py`
+- `nanobot/skills/research-blackboard/scripts/upsert_worker_entry.py`
+- `nanobot/skills/research-blackboard/scripts/add_peer_feedback.py`
+- `nanobot/skills/research-blackboard/scripts/synthesize_findings.py`
+- `nanobot/skills/research-blackboard/scripts/generate_agenda.py`
+- `nanobot/skills/research-blackboard/scripts/research_board_lib.py`
+
+### 已实现的 Report Digest Script
+
+- `nanobot/skills/research-report-digest/scripts/digest_report.py`
+
+### 已实现的测试
+
+- `tests/agent/test_research_skill_scripts.py`
+
+### 当前 MVP 已支持的能力
+
+1. 初始化 research run 目录。
+2. 根据 `candidates.json` 预创建候选方案目录。
+3. 初始化 `shared/worker_board.json` 与 `shared/agenda.json`。
+4. 从 Worker 私有报告中提取结构化摘要。
+5. 将 Worker 摘要写入公共黑板。
+6. 将 peer feedback 写入公共黑板。
+7. 从黑板中聚合全局发现。
+8. 基于黑板和 reviewer feedback 生成下一轮动态议程。
+
+### 当前 MVP 仍未自动化的部分
+
+以下流程已经在设计层和 skill 协议层定义清楚，但还没有做成一键编排：
+
+1. Planner 自动检索后直接产出 `candidates.json`。
+2. Implementer 自动批量 `spawn` Worker。
+3. Worker 自动执行完整三轮协作。
+4. Reviewer 自动消费最终产物并回写打回意见。
+
+也就是说，当前仓库已经具备了动态协作协议和工件层实现，但还没有把完整编排封装成一个单命令工作流。
+
+## 1.2 当前推荐使用方式
+
+在当前实现下，建议按照以下顺序使用：
+
+1. 由 Planner 生成：
+   - `plan/candidates.json`
+   - `plan/acceptance_spec.json`
+2. 用 `init_research_run.py` 初始化 run 目录。
+3. 由 Implementer 基于 `research-implementer` skill 拉起多个 Worker。
+4. Worker 在私有目录完成实现并生成私有报告。
+5. Worker 用 `digest_report.py` 生成摘要。
+6. Worker 用 `upsert_worker_entry.py` 和 `add_peer_feedback.py` 更新公共黑板。
+7. Implementer 用 `synthesize_findings.py` 与 `generate_agenda.py` 推进下一轮。
+8. Reviewer 最终读取 `acceptance_spec.json`、黑板、交付物并生成 `review_feedback.json`。
+
+## 1.3 当前最小命令链路
+
+下面是一条当前版本已经支持的最小命令链路：
+
+### 初始化 run
+
+```bash
+python nanobot/skills/research-blackboard/scripts/init_research_run.py \
+  --root ~/.nanobot/workspace/research_runs \
+  --run-id demo_run_001 \
+  --problem "Improve research planning quality" \
+  --candidates-file /path/to/candidates.json \
+  --acceptance-file /path/to/acceptance_spec.json
+```
+
+### 从私有报告抽取摘要
+
+```bash
+python nanobot/skills/research-report-digest/scripts/digest_report.py \
+  --report /path/to/report.md \
+  --metrics /path/to/metrics.json \
+  --candidate-id candidate_01 \
+  --plan-name "Plan A" \
+  --round 1 \
+  --owner worker_01 \
+  --output /path/to/digest.json
+```
+
+### 更新公共黑板
+
+```bash
+python nanobot/skills/research-blackboard/scripts/upsert_worker_entry.py \
+  --board /path/to/worker_board.json \
+  --candidate-id candidate_01 \
+  --entry-file /path/to/digest.json
+```
+
+### 添加 peer feedback
+
+```bash
+python nanobot/skills/research-blackboard/scripts/add_peer_feedback.py \
+  --board /path/to/worker_board.json \
+  --from-candidate candidate_02 \
+  --to-candidate candidate_01 \
+  --feedback-file /path/to/feedback.json
+```
+
+### 聚合全局发现
+
+```bash
+python nanobot/skills/research-blackboard/scripts/synthesize_findings.py \
+  --board /path/to/worker_board.json
+```
+
+### 生成下一轮议程
+
+```bash
+python nanobot/skills/research-blackboard/scripts/generate_agenda.py \
+  --board /path/to/worker_board.json \
+  --agenda /path/to/agenda.json \
+  --max-rounds 3
+```
+
 ## 2. 核心设计结论
 
 这套系统应当被实现为：
