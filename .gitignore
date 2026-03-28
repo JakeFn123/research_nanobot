@@ -23,3 +23,5 @@ botpy.log
 nano.*.save
 .DS_Store
 uv.lock
+.demo_runs/
+.demo_runs_ui/

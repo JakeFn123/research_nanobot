@@ -18,6 +18,35 @@
 
 📏 Real-time line count: run `bash core_agent_lines.sh` to verify anytime.
 
+## 🇨🇳 中文快速上手
+
+> [!TIP]
+> 推荐先阅读中文新手文档：[EASY_START_GUIDE.md](./EASY_START_GUIDE.md)
+
+如果你想用最短时间跑通 nanobot，可以先做这 3 步：
+
+**1. 初始化**
+
+```bash
+nanobot onboard --wizard
+```
+
+**2. 配置模型**
+
+编辑 `~/.nanobot/config.json`，至少配置 `providers.<provider>.apiKey` 和 `agents.defaults.model`。
+
+**3. 开始对话**
+
+```bash
+nanobot agent
+```
+
+需要接入 Telegram/Discord/WhatsApp 等聊天平台时，再启动：
+
+```bash
+nanobot gateway
+```
+
 ## 📢 News
 
 > [!IMPORTANT]
@@ -104,6 +133,8 @@
 
 ## Table of Contents
 
+- [中文新手指南（EASY_START_GUIDE）](./EASY_START_GUIDE.md)
+- [中文快速上手](#-中文快速上手)
 - [News](#-news)
 - [Key Features](#key-features-of-nanobot)
 - [Architecture](#️-architecture)

@@ -1,0 +1,7 @@
+{
+  "primary_metric": 0.69,
+  "secondary_metrics": {
+    "latency_ms": 480,
+    "cost_usd": 0.31
+  }
+}

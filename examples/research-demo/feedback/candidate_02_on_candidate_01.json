@@ -1,0 +1,14 @@
+{
+  "observed_strengths": [
+    "strong grounding from retrieved evidence"
+  ],
+  "observed_weaknesses": [
+    "latency is too high for iterative planning"
+  ],
+  "borrowable_ideas": [
+    "use retrieval only after cheap ranking has filtered weak options"
+  ],
+  "suggested_improvement": [
+    "split broad retrieval from deep retrieval"
+  ]
+}

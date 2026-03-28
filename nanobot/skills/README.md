@@ -23,3 +23,9 @@ The skill format and metadata structure follow OpenClaw's conventions to maintai
 | `tmux` | Remote-control tmux sessions |
 | `clawhub` | Search and install skills from ClawHub registry |
 | `skill-creator` | Create new skills |
+| `research-planner` | Plan research runs and initialize candidates and acceptance files |
+| `research-implementer` | Coordinate worker agents through shared board and agenda files |
+| `research-worker` | Execute one candidate privately and publish only key findings |
+| `research-reviewer` | Review research outputs with tool-grounded evidence |
+| `research-blackboard` | Maintain the shared worker board and dynamic agenda |
+| `research-report-digest` | Extract structured board summaries from private worker reports |
