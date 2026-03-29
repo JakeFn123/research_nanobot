@@ -47,6 +47,20 @@ nanobot agent
 nanobot gateway
 ```
 
+## 🧪 科研多智能体（Team + Inbox）
+
+如果你在本项目中做科研多智能体闭环，请优先看这两份中文文档：
+
+1. [系统设计（无共享黑板）](./docs/RESEARCH_MULTI_AGENT_SYSTEM_DESIGN_ZH.md)
+2. [Agent 间 Inbox 通信协议](./docs/RESEARCH_AGENT_TEAM_INBOX_PROTOCOL_ZH.md)
+
+该设计参考 Agent Team / Inbox 模式，重点是：
+
+1. 角色常驻（Planner / Implementer / Worker / Reviewer）
+2. 异步消息驱动（inbox JSONL）
+3. Worker 仅共享关键结论，不共享完整报告
+4. Reviewer 工具化验收，不通过则打回重做
+
 ## 📢 News
 
 > [!IMPORTANT]

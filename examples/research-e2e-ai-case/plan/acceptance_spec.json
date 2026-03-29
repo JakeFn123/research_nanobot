@@ -1,0 +1,22 @@
+{
+  "hard_requirements": [
+    "shared board can be initialized",
+    "worker digests can be published",
+    "peer feedback can be merged",
+    "agenda can be generated from board findings",
+    "review feedback can be generated with tool evidence",
+    "final conclusion artifacts can be generated"
+  ],
+  "soft_requirements": [
+    "global findings identify strengths and failures",
+    "worker actions reflect peer feedback",
+    "final recommendation includes next actions",
+    "evidence quality improves across rounds"
+  ],
+  "review_checks": [
+    {"name": "validate_board_shape", "tool": "exec", "required": true},
+    {"name": "generate_next_agenda", "tool": "exec", "required": true},
+    {"name": "review_feedback_written", "tool": "exec", "required": true},
+    {"name": "final_conclusion_written", "tool": "exec", "required": true}
+  ]
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "candidateId": "candidate_01",
+    "name": "Retrieval-Grounded Decomposition",
+    "hypothesis": "通过先检索后分解可显著降低规划阶段的事实偏差。",
+    "implementationSpec": "先构建文献证据池，再将研究目标拆解为可验收子任务，并为每个子任务绑定证据。",
+    "expectedBenefits": ["降低幻觉", "增强可追溯性"],
+    "risks": ["检索时延增加", "可能遗漏跨领域信号"]
+  },
+  {
+    "candidateId": "candidate_02",
+    "name": "Cost-Aware Plan Ranking",
+    "hypothesis": "轻量级候选排序可在较低成本下保持可接受质量。",
+    "implementationSpec": "并行生成多份草案，以成本约束评分器进行排序，优先执行前2名。",
+    "expectedBenefits": ["成本可控", "迭代速度快"],
+    "risks": ["证据扎实度不足", "易受启发式偏差影响"]
+  },
+  {
+    "candidateId": "candidate_03",
+    "name": "Critique-and-Repair Research Loop",
+    "hypothesis": "显式批判与修复回路可提升鲁棒性与最终可交付质量。",
+    "implementationSpec": "每轮加入失败模式批判、证据缺口修复、可复现实验清单校验。",
+    "expectedBenefits": ["鲁棒性更高", "结论更可执行"],
+    "risks": ["流程更复杂", "轮次延长"]
+  }
+]

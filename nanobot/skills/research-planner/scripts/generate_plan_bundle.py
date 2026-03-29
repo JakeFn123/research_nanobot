@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,9 @@ from typing import Any
 
 def _search_context(problem: str, max_results: int) -> list[dict[str, str]]:
     # Search is best-effort: the script still works offline.
+    enable_search = os.getenv("NANOBOT_ENABLE_DDGS_SEARCH", "").strip().lower() in {"1", "true", "yes", "on"}
+    if not enable_search:
+        return []
     try:
         from ddgs import DDGS  # type: ignore
     except Exception:

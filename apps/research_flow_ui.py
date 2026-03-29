@@ -25,6 +25,7 @@ from digest_report import digest_report
 from finalize_conclusion import finalize_conclusion
 from generate_agenda import generate_agenda
 from init_research_run import init_research_run
+from inbox_lib import list_inbox_messages
 from run_full_cycle import run_full_cycle
 from research_board_lib import extract_candidates, load_json
 from synthesize_findings import synthesize_findings
@@ -133,7 +134,7 @@ def _resolve_candidate_artifacts(
     return fallback_report, fallback_metrics, fallback_round, True
 
 
-def _run_paths(run_root: Path, run_id: str) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
+def _run_paths(run_root: Path, run_id: str) -> tuple[Path, Path, Path, Path, Path, Path, Path, Path]:
     run_dir = run_root / run_id
     board_path = run_dir / "shared" / "worker_board.json"
     agenda_path = run_dir / "shared" / "agenda.json"
@@ -141,7 +142,8 @@ def _run_paths(run_root: Path, run_id: str) -> tuple[Path, Path, Path, Path, Pat
     conclusion_md = run_dir / "deliverables" / "final_conclusion.md"
     debug_jsonl = run_dir / "debug" / "runtime_trace.jsonl"
     debug_md = run_dir / "debug" / "runtime_trace.md"
-    return run_dir, board_path, agenda_path, conclusion_json, conclusion_md, debug_jsonl, debug_md
+    inbox_dir = run_dir / "runtime" / "inbox"
+    return run_dir, board_path, agenda_path, conclusion_json, conclusion_md, debug_jsonl, debug_md, inbox_dir
 
 
 def _init_session_state() -> None:
@@ -162,8 +164,8 @@ def _init_session_state() -> None:
         st.session_state.setdefault(key, value)
 
 
-def _render_paths_overview(run_root: Path, run_id: str) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
-    run_dir, board_path, agenda_path, conclusion_json, conclusion_md, debug_jsonl, debug_md = _run_paths(
+def _render_paths_overview(run_root: Path, run_id: str) -> tuple[Path, Path, Path, Path, Path, Path, Path, Path]:
+    run_dir, board_path, agenda_path, conclusion_json, conclusion_md, debug_jsonl, debug_md, inbox_dir = _run_paths(
         run_root, run_id
     )
     st.caption("当前运行目录")
@@ -183,7 +185,9 @@ def _render_paths_overview(run_root: Path, run_id: str) -> tuple[Path, Path, Pat
     st.code(str(debug_jsonl), language="text")
     st.write("`debug/runtime_trace.md`")
     st.code(str(debug_md), language="text")
-    return run_dir, board_path, agenda_path, conclusion_json, conclusion_md, debug_jsonl, debug_md
+    st.write("`runtime/inbox/`")
+    st.code(str(inbox_dir), language="text")
+    return run_dir, board_path, agenda_path, conclusion_json, conclusion_md, debug_jsonl, debug_md, inbox_dir
 
 
 def _require_file(path: Path, label: str) -> None:
@@ -270,9 +274,10 @@ def main() -> None:
         conclusion_md_path,
         debug_jsonl_path,
         debug_md_path,
+        inbox_dir_path,
     ) = _render_paths_overview(run_root, run_id)
 
-    tabs = st.tabs(["一键全流程", "分步执行", "结果可视化", "结论", "调试日志", "帮助"])
+    tabs = st.tabs(["一键全流程", "分步执行", "结果可视化", "结论", "调试日志", "Inbox通信", "帮助"])
 
     with tabs[0]:
         st.subheader("一键全流程执行")
@@ -490,6 +495,35 @@ def main() -> None:
             st.info("暂未找到 runtime_trace.md")
 
     with tabs[5]:
+        st.subheader("Inbox 通信")
+        if not inbox_dir_path.exists():
+            st.info("暂未找到 runtime/inbox 目录。可运行 inbox 模式后查看。")
+        else:
+            rows = list_inbox_messages(run_dir)
+            if not rows:
+                st.info("inbox 目录存在，但暂未发现消息。")
+            else:
+                roles = sorted({str(item.get("_inbox_role", "")).strip() for item in rows if str(item.get("_inbox_role", "")).strip()})
+                role_pick = st.selectbox("按角色过滤", ["(all)"] + roles, index=0)
+                type_values = sorted({str(item.get("type", "")).strip() for item in rows if str(item.get("type", "")).strip()})
+                type_pick = st.selectbox("按消息类型过滤", ["(all)"] + type_values, index=0)
+                round_values = sorted({int(item.get("round", 0) or 0) for item in rows if isinstance(item.get("round", 0), int)})
+                round_pick = st.selectbox("按轮次过滤", ["(all)"] + [str(v) for v in round_values], index=0)
+
+                filtered: list[dict[str, Any]] = []
+                for row in rows:
+                    if role_pick != "(all)" and str(row.get("_inbox_role", "")) != role_pick:
+                        continue
+                    if type_pick != "(all)" and str(row.get("type", "")) != type_pick:
+                        continue
+                    if round_pick != "(all)" and int(row.get("round", -1) or -1) != int(round_pick):
+                        continue
+                    filtered.append(row)
+
+                st.metric("Inbox Messages", len(filtered))
+                st.dataframe(filtered, use_container_width=True, hide_index=True)
+
+    with tabs[6]:
         st.subheader("使用建议")
         st.write("1. 先在 '一键全流程' 跑通，再用 '分步执行' 做定向调试。")
         st.write("2. 当前流程对共享黑板是顺序写入，避免并发写同一个 board 文件。")
