@@ -19,8 +19,10 @@ class DebugTrace:
 
     def __post_init__(self) -> None:
         self.index = 0
+        self._events: list[dict[str, Any]] = []
         self.debug_dir = self.run_dir / "debug"
         self.jsonl_path = self.debug_dir / "runtime_trace.jsonl"
+        self.json_path = self.debug_dir / "runtime_trace.json"
         self.md_path = self.debug_dir / "runtime_trace.md"
 
         if not self.enabled:
@@ -28,6 +30,20 @@ class DebugTrace:
 
         self.debug_dir.mkdir(parents=True, exist_ok=True)
         self.jsonl_path.write_text("", encoding="utf-8")
+        self.json_path.write_text(
+            json.dumps(
+                {
+                    "run_id": self.run_dir.name,
+                    "generated_at_utc": _utc_now(),
+                    "event_count": 0,
+                    "events": [],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         self.md_path.write_text(
             "# Runtime Trace\n\n"
             "| # | time_utc | status | step | message | details |\n"
@@ -55,9 +71,25 @@ class DebugTrace:
             "message": message,
             "details": details or {},
         }
+        self._events.append(payload)
 
         with self.jsonl_path.open("a", encoding="utf-8") as fp:
             fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+        self.json_path.write_text(
+            json.dumps(
+                {
+                    "run_id": self.run_dir.name,
+                    "generated_at_utc": _utc_now(),
+                    "event_count": len(self._events),
+                    "events": self._events,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
         details_text = json.dumps(payload["details"], ensure_ascii=False)
         safe_message = message.replace("|", "/")
@@ -77,5 +109,6 @@ class DebugTrace:
     def paths(self) -> dict[str, str]:
         return {
             "jsonl": str(self.jsonl_path),
+            "json": str(self.json_path),
             "markdown": str(self.md_path),
         }

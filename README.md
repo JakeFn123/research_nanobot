@@ -84,6 +84,12 @@ nanobot gateway
 3. Worker 仅共享关键结论，不共享完整报告
 4. Reviewer 工具化验收，不通过则打回重做
 
+可视化调试（新 UI）：
+
+```bash
+streamlit run apps/research_team_interactive_ui.py
+```
+
 ## 📢 News
 
 > [!IMPORTANT]

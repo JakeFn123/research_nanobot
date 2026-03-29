@@ -276,3 +276,16 @@ def test_run_inbox_cycle_end_to_end(tmp_path: Path) -> None:
     assert (run_dir / "review" / "review_feedback.json").exists()
     assert (run_dir / "runtime" / "inbox" / "implementer.jsonl").exists()
     assert (run_dir / "debug" / "runtime_trace.jsonl").exists()
+    assert (run_dir / "debug" / "runtime_trace.json").exists()
+
+    trace_payload = json.loads((run_dir / "debug" / "runtime_trace.json").read_text(encoding="utf-8"))
+    assert isinstance(trace_payload.get("events"), list)
+    assert trace_payload.get("event_count", 0) >= 1
+
+    first_event = trace_payload["events"][0]
+    assert isinstance(first_event, dict)
+    details = first_event.get("details", {})
+    assert isinstance(details, dict)
+    assert isinstance(details.get("inputs"), dict)
+    assert isinstance(details.get("outputs"), dict)
+    assert isinstance(details.get("artifacts"), list)

@@ -226,6 +226,26 @@ def _finalize_inbox_conclusion(
     return conclusion
 
 
+def _trace_event(
+    *,
+    tracer: DebugTrace,
+    step: str,
+    status: str,
+    message: str,
+    inputs: dict[str, Any] | None = None,
+    outputs: dict[str, Any] | None = None,
+    artifacts: list[str] | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    details: dict[str, Any] = {}
+    details["inputs"] = inputs or {}
+    details["outputs"] = outputs or {}
+    details["artifacts"] = artifacts or []
+    if extra:
+        details["extra"] = extra
+    tracer.log(step=step, status=status, message=message, details=details)
+
+
 def run_inbox_cycle(
     *,
     run_root: Path,
@@ -245,11 +265,21 @@ def run_inbox_cycle(
     run_dir = run_root / run_id
     inbox_root = run_dir / "runtime" / "inbox"
     tracer = DebugTrace(run_dir=run_dir, enabled=debug_enabled, console=debug_console)
-    tracer.log(
+    _trace_event(
+        tracer=tracer,
         step="pipeline.inbox.start",
         status="start",
         message="run_inbox_cycle started",
-        details={"run_id": run_id, "problem": problem, "max_rounds": max_rounds, "max_review_cycles": max_review_cycles},
+        inputs={
+            "run_id": run_id,
+            "problem": problem,
+            "candidate_count": candidate_count,
+            "max_rounds": max_rounds,
+            "max_review_cycles": max_review_cycles,
+            "allow_fallback_rounds": allow_fallback_rounds,
+            "auto_plan": auto_plan,
+        },
+        outputs={"run_dir": str(run_dir), "inbox_root": str(inbox_root)},
     )
 
     candidates_file, acceptance_file = _prepare_plan(
@@ -270,7 +300,7 @@ def run_inbox_cycle(
     save_json(run_dir / "runtime" / "worker_registry.json", candidate_rows)
 
     # Planner handoff
-    send_message(
+    plan_bundle_msg = send_message(
         inbox_root=inbox_root,
         run_id=run_id,
         round_index=0,
@@ -286,12 +316,31 @@ def run_inbox_cycle(
         },
         artifacts=[str(candidates_file), str(acceptance_file)],
     )
-    tracer.log(step="pipeline.inbox.plan_bundle", status="ok", message="planner handoff published", details={})
+    _trace_event(
+        tracer=tracer,
+        step="pipeline.inbox.plan_bundle",
+        status="ok",
+        message="planner handoff published",
+        inputs={
+            "candidate_rows": candidate_rows,
+            "candidates_file": str(candidates_file),
+            "acceptance_file": str(acceptance_file),
+        },
+        outputs={"message_id": plan_bundle_msg.get("id", "")},
+        artifacts=[str(candidates_file), str(acceptance_file)],
+    )
 
     round_summaries: list[dict[str, Any]] = []
 
     for round_index in range(1, max_rounds + 1):
-        tracer.log(step=f"pipeline.inbox.round.{round_index}", status="start", message="start round", details={})
+        _trace_event(
+            tracer=tracer,
+            step=f"pipeline.inbox.round.{round_index}",
+            status="start",
+            message="start round",
+            inputs={"round": round_index},
+            outputs={"candidate_count": len(candidate_rows)},
+        )
         digests_by_candidate: dict[str, dict[str, Any]] = {}
 
         for row in candidate_rows:
@@ -299,7 +348,7 @@ def run_inbox_cycle(
             worker_role = row["worker"]
             plan_name = row["plan_name"]
 
-            send_message(
+            task_msg = send_message(
                 inbox_root=inbox_root,
                 run_id=run_id,
                 round_index=round_index,
@@ -344,7 +393,7 @@ def run_inbox_cycle(
                 "next_move": normalize_lines(digest.get("proposed_next_move")),
                 "private_report_ref": str(report_path),
             }
-            send_message(
+            update_msg = send_message(
                 inbox_root=inbox_root,
                 run_id=run_id,
                 round_index=round_index,
@@ -357,11 +406,25 @@ def run_inbox_cycle(
             )
 
             digests_by_candidate[candidate_id] = payload
-            tracer.log(
+            _trace_event(
+                tracer=tracer,
                 step=f"round.{round_index}.worker.{candidate_id}",
                 status="ok",
                 message="worker round update published",
-                details={"used_round": used_round, "fallback": used_fallback},
+                inputs={
+                    "candidate_id": candidate_id,
+                    "worker_role": worker_role,
+                    "task_message_id": task_msg.get("id", ""),
+                    "report_path": str(report_path),
+                    "metrics_path": str(metrics_path),
+                },
+                outputs={
+                    "digest_path": str(digest_path),
+                    "update_message_id": update_msg.get("id", ""),
+                    "used_round": used_round,
+                    "fallback": used_fallback,
+                },
+                artifacts=[str(report_path), str(metrics_path), str(digest_path)],
             )
 
         # Peer key insight + improvement proposal exchange
@@ -416,7 +479,7 @@ def run_inbox_cycle(
         )
         round_summaries.append(round_summary)
 
-        send_message(
+        synthesis_msg = send_message(
             inbox_root=inbox_root,
             run_id=run_id,
             round_index=round_index,
@@ -431,17 +494,27 @@ def run_inbox_cycle(
             },
             artifacts=[str(round_summary_path)],
         )
-        tracer.log(
+        _trace_event(
+            tracer=tracer,
             step=f"round.{round_index}.synthesis",
             status="ok",
             message="round synthesis ready",
-            details={"summary_path": str(round_summary_path)},
+            inputs={
+                "round": round_index,
+                "worker_updates": len(digests_by_candidate),
+            },
+            outputs={
+                "summary_path": str(round_summary_path),
+                "reviewer_message_id": synthesis_msg.get("id", ""),
+                "candidate_rank_hint": round_summary.get("candidate_rank_hint", []),
+            },
+            artifacts=[str(round_summary_path)],
         )
 
     review_feedback_path = run_dir / "review" / "review_feedback.json"
     review_report_path = run_dir / "review" / "review_report.md"
 
-    send_message(
+    review_request_msg = send_message(
         inbox_root=inbox_root,
         run_id=run_id,
         round_index=max_rounds,
@@ -462,7 +535,7 @@ def run_inbox_cycle(
         output_report=review_report_path,
     )
 
-    send_message(
+    review_result_msg = send_message(
         inbox_root=inbox_root,
         run_id=run_id,
         round_index=max_rounds,
@@ -473,21 +546,34 @@ def run_inbox_cycle(
         payload=review_payload,
         artifacts=[str(review_feedback_path), str(review_report_path)],
     )
-    tracer.log(
+    _trace_event(
+        tracer=tracer,
         step="pipeline.inbox.review.initial",
         status="ok",
         message="initial review completed",
-        details={"approved": bool(review_payload.get("approved", False))},
+        inputs={
+            "review_request_message_id": review_request_msg.get("id", ""),
+            "acceptance_file": str(acceptance_file),
+            "latest_round_summary": str(run_dir / "runtime" / "round_summaries" / f"round_{max_rounds}.json"),
+        },
+        outputs={
+            "review_result_message_id": review_result_msg.get("id", ""),
+            "approved": bool(review_payload.get("approved", False)),
+            "must_fix_count": len(normalize_lines(review_payload.get("must_fix"))),
+        },
+        artifacts=[str(review_feedback_path), str(review_report_path)],
     )
 
     review_cycles = 1
     while not review_payload.get("approved", False) and review_cycles < max_review_cycles:
         redo_round = max_rounds + review_cycles
-        tracer.log(
+        _trace_event(
+            tracer=tracer,
             step=f"pipeline.inbox.review.redo.{review_cycles + 1}",
             status="start",
             message="routing reviewer feedback",
-            details={"redo_round": redo_round},
+            inputs={"redo_round": redo_round, "review_cycle": review_cycles + 1},
+            outputs={},
         )
 
         routing_summary_path = run_dir / "review" / f"redo_routing_round_{redo_round}.json"
@@ -516,11 +602,16 @@ def run_inbox_cycle(
                 )
             except FileNotFoundError as exc:
                 redo_blocked = True
-                tracer.log(
+                _trace_event(
+                    tracer=tracer,
                     step=f"round.{redo_round}.worker.{candidate_id}",
                     status="warn",
                     message="redo worker update skipped: missing artifacts",
-                    details={
+                    inputs={
+                        "candidate_id": candidate_id,
+                        "redo_round": redo_round,
+                    },
+                    outputs={
                         "error": str(exc),
                         "allow_fallback_rounds": allow_fallback_rounds,
                     },
@@ -551,7 +642,7 @@ def run_inbox_cycle(
                 "next_move": normalize_lines(digest.get("proposed_next_move")),
                 "private_report_ref": str(report_path),
             }
-            send_message(
+            redo_update_msg = send_message(
                 inbox_root=inbox_root,
                 run_id=run_id,
                 round_index=redo_round,
@@ -563,19 +654,32 @@ def run_inbox_cycle(
                 artifacts=[str(report_path), str(metrics_path)],
             )
             digests_by_candidate[candidate_id] = payload
-            tracer.log(
+            _trace_event(
+                tracer=tracer,
                 step=f"round.{redo_round}.worker.{candidate_id}",
                 status="ok",
                 message="redo worker update published",
-                details={"used_round": used_round, "fallback": used_fallback},
+                inputs={
+                    "candidate_id": candidate_id,
+                    "report_path": str(report_path),
+                    "metrics_path": str(metrics_path),
+                },
+                outputs={
+                    "redo_update_message_id": redo_update_msg.get("id", ""),
+                    "used_round": used_round,
+                    "fallback": used_fallback,
+                },
+                artifacts=[str(report_path), str(metrics_path), str(digest_path)],
             )
 
         if redo_blocked:
-            tracer.log(
+            _trace_event(
+                tracer=tracer,
                 step=f"pipeline.inbox.review.redo.{review_cycles + 1}",
                 status="warn",
                 message="redo iteration stopped due to missing artifacts",
-                details={"redo_round": redo_round},
+                inputs={"redo_round": redo_round},
+                outputs={"blocked": True},
             )
             break
 
@@ -589,7 +693,7 @@ def run_inbox_cycle(
             output_feedback=review_feedback_path,
             output_report=review_report_path,
         )
-        send_message(
+        redo_review_result_msg = send_message(
             inbox_root=inbox_root,
             run_id=run_id,
             round_index=redo_round,
@@ -601,11 +705,21 @@ def run_inbox_cycle(
             artifacts=[str(review_feedback_path), str(review_report_path)],
         )
         review_cycles += 1
-        tracer.log(
+        _trace_event(
+            tracer=tracer,
             step=f"pipeline.inbox.review.redo.{review_cycles}",
             status="ok",
             message="redo review completed",
-            details={"approved": bool(review_payload.get("approved", False))},
+            inputs={
+                "redo_round": redo_round,
+                "round_summary_path": str(round_summary_path),
+            },
+            outputs={
+                "review_result_message_id": redo_review_result_msg.get("id", ""),
+                "approved": bool(review_payload.get("approved", False)),
+                "must_fix_count": len(normalize_lines(review_payload.get("must_fix"))),
+            },
+            artifacts=[str(round_summary_path), str(review_feedback_path), str(review_report_path)],
         )
 
     latest_round = max_rounds if not round_summaries else int(round_summaries[-1].get("round", max_rounds) or max_rounds)
@@ -623,7 +737,7 @@ def run_inbox_cycle(
         problem=problem,
     )
 
-    send_message(
+    final_package_msg = send_message(
         inbox_root=inbox_root,
         run_id=run_id,
         round_index=latest_round,
@@ -646,14 +760,26 @@ def run_inbox_cycle(
         "final_conclusion_md": str(conclusion_md),
         "pipeline_summary_json": str(run_dir / "deliverables" / "pipeline_summary_inbox.json"),
         "debug_trace_jsonl": tracer.paths()["jsonl"],
+        "debug_trace_json": tracer.paths()["json"],
         "debug_trace_markdown": tracer.paths()["markdown"],
     }
     save_json(run_dir / "deliverables" / "pipeline_summary_inbox.json", summary)
-    tracer.log(
+    _trace_event(
+        tracer=tracer,
         step="pipeline.inbox.finish",
         status="ok",
         message="run_inbox_cycle finished",
-        details={"approved": summary["approved"], "winner": summary["winner_candidate"]},
+        inputs={
+            "latest_round": latest_round,
+            "review_cycles": review_cycles,
+            "final_package_message_id": final_package_msg.get("id", ""),
+        },
+        outputs={
+            "approved": summary["approved"],
+            "winner": summary["winner_candidate"],
+            "pipeline_summary_json": summary["pipeline_summary_json"],
+        },
+        artifacts=[summary["pipeline_summary_json"], summary["final_conclusion_json"], summary["review_feedback_path"]],
     )
     return summary
 

@@ -23,7 +23,7 @@
 ## 3. UI 与工程化
 
 1. [STREAMLIT_UI_GUIDE_ZH.md](./STREAMLIT_UI_GUIDE_ZH.md)
-   - 本地 Streamlit 可视化测试台
+   - 本地 Streamlit 可视化测试台（含新交互式 Agent Team UI）
 2. [OPENSPEC_PROJECT_PLAYBOOK.md](./OPENSPEC_PROJECT_PLAYBOOK.md)
    - OpenSpec 变更管理与校验
 
