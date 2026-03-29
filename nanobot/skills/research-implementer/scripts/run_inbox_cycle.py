@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import argparse
 import shutil
+from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 import sys
 
@@ -22,12 +26,16 @@ for directory in (PLANNER_DIR, DIGEST_DIR, WORKER_DIR, BLACKBOARD_DIR, REVIEWER_
 from debug_trace import DebugTrace
 from digest_report import digest_report
 from generate_plan_bundle import generate_plan_bundle
-from inbox_lib import send_message
+from inbox_lib import list_inbox_messages, send_message
 from research_board_lib import extract_candidates, load_json, normalize_lines, save_json
 from review_inbox_run import review_inbox_run
 from route_review_feedback import route_review_feedback
 from summarize_round_messages import summarize_round_messages
 from worker_round_lib import build_feedback_from_entry, resolve_artifacts
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _candidate_rows(candidates_payload: Any) -> list[dict[str, Any]]:
@@ -92,6 +100,173 @@ def _peer_payload_from_digest(digest: dict[str, Any]) -> dict[str, list[str]]:
         "proposed_next_move": normalize_lines(digest.get("proposed_next_move")),
     }
     return build_feedback_from_entry(entry)
+
+
+def _lane_id_for_role(role: str) -> str:
+    clean = role.strip().lower() or "system"
+    return f"lane.role.{clean}"
+
+
+def _role_kind(role: str) -> str:
+    clean = role.strip().lower()
+    if clean == "planner":
+        return "planner"
+    if clean == "implementer":
+        return "implementer"
+    if clean == "reviewer":
+        return "reviewer"
+    if clean.startswith("worker_"):
+        return "worker"
+    return "system"
+
+
+def _register_runtime_lanes(tracer: DebugTrace, candidate_rows: list[dict[str, Any]]) -> None:
+    tracer.register_lane(
+        lane_id=_lane_id_for_role("planner"),
+        agent_name="planner",
+        agent_kind="planner",
+        metadata={"role": "planner"},
+    )
+    tracer.register_lane(
+        lane_id=_lane_id_for_role("implementer"),
+        agent_name="implementer",
+        agent_kind="implementer",
+        metadata={"role": "implementer"},
+    )
+    tracer.register_lane(
+        lane_id=_lane_id_for_role("reviewer"),
+        agent_name="reviewer",
+        agent_kind="reviewer",
+        metadata={"role": "reviewer"},
+    )
+    for row in candidate_rows:
+        worker = str(row.get("worker", "")).strip()
+        if not worker:
+            continue
+        tracer.register_lane(
+            lane_id=_lane_id_for_role(worker),
+            agent_name=worker,
+            agent_kind="worker",
+            metadata={
+                "role": worker,
+                "candidate_id": str(row.get("candidate_id", "")).strip(),
+                "plan_name": str(row.get("plan_name", "")).strip(),
+            },
+        )
+
+
+def _build_message_threads(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    by_thread: dict[str, dict[str, Any]] = {}
+    by_correlation: dict[str, dict[str, Any]] = {}
+    message_ids: set[str] = set()
+    edges: list[dict[str, str]] = []
+
+    for row in messages:
+        msg_id = str(row.get("id", "")).strip()
+        if msg_id:
+            message_ids.add(msg_id)
+
+    for row in messages:
+        msg_id = str(row.get("id", "")).strip()
+        sender = str(row.get("from", "")).strip()
+        receiver = str(row.get("to", "")).strip()
+        msg_type = str(row.get("type", "")).strip()
+        thread_id = str(row.get("thread_id", "")).strip() or str(row.get("correlation_id", "")).strip() or "unthreaded"
+        correlation_id = str(row.get("correlation_id", "")).strip() or "uncorrelated"
+        reply_to = str(row.get("reply_to", "")).strip()
+        try:
+            round_index = int(row.get("round", 0) or 0)
+        except (TypeError, ValueError):
+            round_index = 0
+        call_id = str(row.get("call_id", "")).strip()
+
+        thread = by_thread.setdefault(
+            thread_id,
+            {
+                "thread_id": thread_id,
+                "message_count": 0,
+                "message_types": defaultdict(int),
+                "participants": set(),
+                "round_min": round_index,
+                "round_max": round_index,
+                "calls": set(),
+            },
+        )
+        thread["message_count"] += 1
+        thread["message_types"][msg_type or "unknown"] += 1
+        if sender:
+            thread["participants"].add(sender)
+        if receiver:
+            thread["participants"].add(receiver)
+        thread["round_min"] = min(thread["round_min"], round_index)
+        thread["round_max"] = max(thread["round_max"], round_index)
+        if call_id:
+            thread["calls"].add(call_id)
+
+        corr = by_correlation.setdefault(
+            correlation_id,
+            {
+                "correlation_id": correlation_id,
+                "message_count": 0,
+                "thread_ids": set(),
+                "participants": set(),
+                "message_types": defaultdict(int),
+            },
+        )
+        corr["message_count"] += 1
+        corr["thread_ids"].add(thread_id)
+        if sender:
+            corr["participants"].add(sender)
+        if receiver:
+            corr["participants"].add(receiver)
+        corr["message_types"][msg_type or "unknown"] += 1
+
+        if msg_id and reply_to:
+            edges.append({"from_message_id": msg_id, "to_message_id": reply_to})
+
+    orphan_replies = [edge for edge in edges if edge["to_message_id"] not in message_ids]
+    response_pairs = len(edges) - len(orphan_replies)
+
+    thread_rows: list[dict[str, Any]] = []
+    for row in by_thread.values():
+        thread_rows.append(
+            {
+                "thread_id": row["thread_id"],
+                "message_count": int(row["message_count"]),
+                "participants": sorted(row["participants"]),
+                "round_span": {"min": int(row["round_min"]), "max": int(row["round_max"])},
+                "call_ids": sorted(row["calls"]),
+                "message_types": dict(sorted(row["message_types"].items())),
+            }
+        )
+    thread_rows.sort(key=lambda item: (-item["message_count"], item["thread_id"]))
+
+    corr_rows: list[dict[str, Any]] = []
+    for row in by_correlation.values():
+        corr_rows.append(
+            {
+                "correlation_id": row["correlation_id"],
+                "message_count": int(row["message_count"]),
+                "thread_ids": sorted(row["thread_ids"]),
+                "participants": sorted(row["participants"]),
+                "message_types": dict(sorted(row["message_types"].items())),
+            }
+        )
+    corr_rows.sort(key=lambda item: (-item["message_count"], item["correlation_id"]))
+
+    return {
+        "schema_version": "inbox_threads_v1",
+        "generated_at_utc": _utc_now(),
+        "message_count": len(messages),
+        "thread_count": len(thread_rows),
+        "correlation_count": len(corr_rows),
+        "reply_edge_count": len(edges),
+        "paired_reply_count": response_pairs,
+        "orphan_reply_count": len(orphan_replies),
+        "orphan_replies": orphan_replies,
+        "threads": thread_rows,
+        "correlations": corr_rows,
+    }
 
 
 def _finalize_inbox_conclusion(
@@ -236,14 +411,41 @@ def _trace_event(
     outputs: dict[str, Any] | None = None,
     artifacts: list[str] | None = None,
     extra: dict[str, Any] | None = None,
-) -> None:
+    lane_id: str = "lane.system",
+    agent_name: str = "system",
+    agent_kind: str = "system",
+    event_type: str = "",
+    phase: str = "single",
+    call_id: str = "",
+    message_id: str = "",
+    reply_to_message_id: str = "",
+    parent_event_id: str = "",
+    duration_ms: int | None = None,
+    status_code: str = "",
+) -> dict[str, Any]:
     details: dict[str, Any] = {}
     details["inputs"] = inputs or {}
     details["outputs"] = outputs or {}
     details["artifacts"] = artifacts or []
     if extra:
         details["extra"] = extra
-    tracer.log(step=step, status=status, message=message, details=details)
+    return tracer.log(
+        step=step,
+        status=status,
+        message=message,
+        details=details,
+        lane_id=lane_id,
+        agent_name=agent_name,
+        agent_kind=agent_kind,
+        event_type=event_type,
+        phase=phase,
+        call_id=call_id,
+        message_id=message_id,
+        reply_to_message_id=reply_to_message_id,
+        parent_event_id=parent_event_id,
+        duration_ms=duration_ms,
+        status_code=status_code,
+    )
 
 
 def run_inbox_cycle(
@@ -270,6 +472,11 @@ def run_inbox_cycle(
         step="pipeline.inbox.start",
         status="start",
         message="run_inbox_cycle started",
+        lane_id="lane.system",
+        agent_name="system",
+        agent_kind="system",
+        event_type="pipeline.lifecycle",
+        phase="single",
         inputs={
             "run_id": run_id,
             "problem": problem,
@@ -295,14 +502,118 @@ def run_inbox_cycle(
     if len(candidate_rows) < 3:
         raise ValueError("inbox cycle requires 3-5 candidates")
     candidate_rows = candidate_rows[:5]
+    _register_runtime_lanes(tracer, candidate_rows)
 
     inbox_root.mkdir(parents=True, exist_ok=True)
     save_json(run_dir / "runtime" / "worker_registry.json", candidate_rows)
 
+    def _publish_message(
+        *,
+        round_index: int,
+        from_role: str,
+        to_role: str,
+        message_type: str,
+        correlation_id: str,
+        payload: dict[str, Any] | None = None,
+        reply_to: str = "",
+        priority: str = "normal",
+        artifacts: list[str] | None = None,
+        thread_id: str = "",
+    ) -> dict[str, Any]:
+        call_id = f"call_{uuid4().hex[:16]}"
+        sender = from_role.strip().lower()
+        receiver = to_role.strip().lower()
+        lane_id = _lane_id_for_role(sender)
+        started = perf_counter()
+        _trace_event(
+            tracer=tracer,
+            step=f"message.send.{message_type}",
+            status="start",
+            message="sending inbox message",
+            lane_id=lane_id,
+            agent_name=sender,
+            agent_kind=_role_kind(sender),
+            event_type="inbox.message",
+            phase="begin",
+            call_id=call_id,
+            inputs={
+                "from_role": sender,
+                "to_role": receiver,
+                "round": round_index,
+                "message_type": message_type,
+                "correlation_id": correlation_id,
+                "thread_id": thread_id or correlation_id,
+                "payload_keys": sorted((payload or {}).keys()),
+                "reply_to": reply_to.strip(),
+                "priority": priority.strip() or "normal",
+            },
+            artifacts=artifacts or [],
+        )
+        try:
+            message = send_message(
+                inbox_root=inbox_root,
+                run_id=run_id,
+                round_index=round_index,
+                from_role=sender,
+                to_role=receiver,
+                message_type=message_type,
+                correlation_id=correlation_id,
+                payload=payload,
+                reply_to=reply_to,
+                call_id=call_id,
+                thread_id=thread_id,
+                priority=priority,
+                artifacts=artifacts,
+            )
+        except Exception as exc:
+            _trace_event(
+                tracer=tracer,
+                step=f"message.send.{message_type}",
+                status="error",
+                message="inbox message send failed",
+                lane_id=lane_id,
+                agent_name=sender,
+                agent_kind=_role_kind(sender),
+                event_type="inbox.message",
+                phase="end",
+                call_id=call_id,
+                duration_ms=int((perf_counter() - started) * 1000),
+                status_code="exception",
+                outputs={"error": str(exc)},
+            )
+            raise
+        _trace_event(
+            tracer=tracer,
+            step=f"message.send.{message_type}",
+            status="ok",
+            message="inbox message sent",
+            lane_id=lane_id,
+            agent_name=sender,
+            agent_kind=_role_kind(sender),
+            event_type="inbox.message",
+            phase="end",
+            call_id=call_id,
+            message_id=str(message.get("id", "")).strip(),
+            reply_to_message_id=str(message.get("reply_to", "")).strip(),
+            duration_ms=int((perf_counter() - started) * 1000),
+            inputs={
+                "from_role": sender,
+                "to_role": receiver,
+                "round": round_index,
+                "message_type": message_type,
+                "correlation_id": correlation_id,
+                "thread_id": thread_id or correlation_id,
+            },
+            outputs={
+                "message_id": message.get("id", ""),
+                "call_id": message.get("call_id", ""),
+            },
+            artifacts=[item for item in message.get("artifacts", []) if isinstance(item, str)],
+        )
+        return message
+
     # Planner handoff
-    plan_bundle_msg = send_message(
-        inbox_root=inbox_root,
-        run_id=run_id,
+    plan_bundle_msg = _publish_message(
         round_index=0,
         from_role="planner",
         to_role="implementer",
@@ -348,15 +659,14 @@ def run_inbox_cycle(
             worker_role = row["worker"]
             plan_name = row["plan_name"]
 
-            task_msg = send_message(
-                inbox_root=inbox_root,
-                run_id=run_id,
+            task_msg = _publish_message(
                 round_index=round_index,
                 from_role="implementer",
                 to_role=worker_role,
                 message_type="worker_task_assigned",
                 correlation_id=f"task_{candidate_id}_r{round_index}",
                 payload={"candidate_id": candidate_id, "plan_name": plan_name, "round": round_index},
+                thread_id=f"thread.task.{candidate_id}",
             )
 
             report_path, metrics_path, used_round, used_fallback = resolve_artifacts(
@@ -393,16 +703,16 @@ def run_inbox_cycle(
                 "next_move": normalize_lines(digest.get("proposed_next_move")),
                 "private_report_ref": str(report_path),
             }
-            update_msg = send_message(
-                inbox_root=inbox_root,
-                run_id=run_id,
+            update_msg = _publish_message(
                 round_index=round_index,
                 from_role=worker_role,
                 to_role="implementer",
                 message_type="worker_round_update",
                 correlation_id=f"update_{candidate_id}_r{round_index}",
                 payload=payload,
+                reply_to=str(task_msg.get("id", "")).strip(),
                 artifacts=[str(report_path), str(metrics_path)],
+                thread_id=f"thread.update.{candidate_id}",
             )
 
             digests_by_candidate[candidate_id] = payload
@@ -440,9 +750,7 @@ def run_inbox_cycle(
                 target_digest = digests_by_candidate.get(to_candidate, {})
                 peer_payload = _peer_payload_from_digest(target_digest)
 
-                send_message(
-                    inbox_root=inbox_root,
-                    run_id=run_id,
+                _publish_message(
                     round_index=round_index,
                     from_role=from_worker,
                     to_role=to_worker,
@@ -453,11 +761,10 @@ def run_inbox_cycle(
                         "to_candidate": to_candidate,
                         **peer_payload,
                     },
+                    thread_id=f"thread.peer.{from_candidate}.{to_candidate}",
                 )
 
-                send_message(
-                    inbox_root=inbox_root,
-                    run_id=run_id,
+                _publish_message(
                     round_index=round_index,
                     from_role=from_worker,
                     to_role="implementer",
@@ -469,6 +776,7 @@ def run_inbox_cycle(
                         "suggested_improvement": peer_payload.get("suggested_improvement", []),
                         "borrowable_ideas": peer_payload.get("borrowable_ideas", []),
                     },
+                    thread_id=f"thread.improve.{from_candidate}.{to_candidate}",
                 )
 
         round_summary_path = run_dir / "runtime" / "round_summaries" / f"round_{round_index}.json"
@@ -479,9 +787,7 @@ def run_inbox_cycle(
         )
         round_summaries.append(round_summary)
 
-        synthesis_msg = send_message(
-            inbox_root=inbox_root,
-            run_id=run_id,
+        synthesis_msg = _publish_message(
             round_index=round_index,
             from_role="implementer",
             to_role="reviewer",
@@ -493,6 +799,7 @@ def run_inbox_cycle(
                 "candidate_rank_hint": round_summary.get("candidate_rank_hint", []),
             },
             artifacts=[str(round_summary_path)],
+            thread_id="thread.round.synthesis",
         )
         _trace_event(
             tracer=tracer,
@@ -514,9 +821,7 @@ def run_inbox_cycle(
     review_feedback_path = run_dir / "review" / "review_feedback.json"
     review_report_path = run_dir / "review" / "review_report.md"
 
-    review_request_msg = send_message(
-        inbox_root=inbox_root,
-        run_id=run_id,
+    review_request_msg = _publish_message(
         round_index=max_rounds,
         from_role="implementer",
         to_role="reviewer",
@@ -526,6 +831,7 @@ def run_inbox_cycle(
             "acceptance_path": str(acceptance_file),
             "latest_round_summary": str(run_dir / "runtime" / "round_summaries" / f"round_{max_rounds}.json"),
         },
+        thread_id="thread.review.initial",
     )
 
     review_payload = review_inbox_run(
@@ -535,16 +841,16 @@ def run_inbox_cycle(
         output_report=review_report_path,
     )
 
-    review_result_msg = send_message(
-        inbox_root=inbox_root,
-        run_id=run_id,
+    review_result_msg = _publish_message(
         round_index=max_rounds,
         from_role="reviewer",
         to_role="implementer",
         message_type=("review_result_approved" if review_payload.get("approved", False) else "review_result_rejected"),
         correlation_id="review_initial_result",
         payload=review_payload,
+        reply_to=str(review_request_msg.get("id", "")).strip(),
         artifacts=[str(review_feedback_path), str(review_report_path)],
+        thread_id="thread.review.initial",
     )
     _trace_event(
         tracer=tracer,
@@ -642,9 +948,7 @@ def run_inbox_cycle(
                 "next_move": normalize_lines(digest.get("proposed_next_move")),
                 "private_report_ref": str(report_path),
             }
-            redo_update_msg = send_message(
-                inbox_root=inbox_root,
-                run_id=run_id,
+            redo_update_msg = _publish_message(
                 round_index=redo_round,
                 from_role=worker_role,
                 to_role="implementer",
@@ -652,6 +956,7 @@ def run_inbox_cycle(
                 correlation_id=f"redo_update_{candidate_id}_r{redo_round}",
                 payload=payload,
                 artifacts=[str(report_path), str(metrics_path)],
+                thread_id=f"thread.redo.update.{candidate_id}",
             )
             digests_by_candidate[candidate_id] = payload
             _trace_event(
@@ -693,9 +998,7 @@ def run_inbox_cycle(
             output_feedback=review_feedback_path,
             output_report=review_report_path,
         )
-        redo_review_result_msg = send_message(
-            inbox_root=inbox_root,
-            run_id=run_id,
+        redo_review_result_msg = _publish_message(
             round_index=redo_round,
             from_role="reviewer",
             to_role="implementer",
@@ -703,6 +1006,7 @@ def run_inbox_cycle(
             correlation_id=f"review_redo_result_{redo_round}",
             payload=review_payload,
             artifacts=[str(review_feedback_path), str(review_report_path)],
+            thread_id="thread.review.redo",
         )
         review_cycles += 1
         _trace_event(
@@ -737,9 +1041,7 @@ def run_inbox_cycle(
         problem=problem,
     )
 
-    final_package_msg = send_message(
-        inbox_root=inbox_root,
-        run_id=run_id,
+    final_package_msg = _publish_message(
         round_index=latest_round,
         from_role="implementer",
         to_role="planner",
@@ -747,6 +1049,28 @@ def run_inbox_cycle(
         correlation_id="final_package",
         payload={"winner_candidate": conclusion.get("selected_solution", {}).get("winner_candidate_id", "")},
         artifacts=[str(conclusion_json), str(conclusion_md)],
+        thread_id="thread.final.package",
+    )
+
+    message_threads_path = run_dir / "debug" / "message_threads.json"
+    thread_payload = _build_message_threads(list_inbox_messages(run_dir))
+    save_json(message_threads_path, thread_payload)
+    _trace_event(
+        tracer=tracer,
+        step="pipeline.inbox.threads",
+        status="ok",
+        message="generated message thread diagnostics",
+        lane_id="lane.system",
+        agent_name="system",
+        agent_kind="system",
+        event_type="pipeline.diagnostics",
+        phase="single",
+        outputs={
+            "message_count": thread_payload.get("message_count", 0),
+            "thread_count": thread_payload.get("thread_count", 0),
+            "orphan_reply_count": thread_payload.get("orphan_reply_count", 0),
+        },
+        artifacts=[str(message_threads_path)],
     )
 
     summary = {
@@ -761,7 +1085,10 @@ def run_inbox_cycle(
         "pipeline_summary_json": str(run_dir / "deliverables" / "pipeline_summary_inbox.json"),
         "debug_trace_jsonl": tracer.paths()["jsonl"],
         "debug_trace_json": tracer.paths()["json"],
+        "debug_trace_health_json": tracer.paths()["health"],
         "debug_trace_markdown": tracer.paths()["markdown"],
+        "debug_message_threads_json": str(message_threads_path),
+        "debug_trace_schema_version": tracer.schema_version,
     }
     save_json(run_dir / "deliverables" / "pipeline_summary_inbox.json", summary)
     _trace_event(

@@ -277,15 +277,29 @@ def test_run_inbox_cycle_end_to_end(tmp_path: Path) -> None:
     assert (run_dir / "runtime" / "inbox" / "implementer.jsonl").exists()
     assert (run_dir / "debug" / "runtime_trace.jsonl").exists()
     assert (run_dir / "debug" / "runtime_trace.json").exists()
+    assert (run_dir / "debug" / "runtime_trace_health.json").exists()
+    assert (run_dir / "debug" / "message_threads.json").exists()
 
     trace_payload = json.loads((run_dir / "debug" / "runtime_trace.json").read_text(encoding="utf-8"))
+    assert trace_payload.get("schema_version") == "runtime_trace_v2"
     assert isinstance(trace_payload.get("events"), list)
     assert trace_payload.get("event_count", 0) >= 1
+    assert isinstance(trace_payload.get("summary"), dict)
+    assert isinstance(trace_payload.get("lanes"), list)
 
     first_event = trace_payload["events"][0]
     assert isinstance(first_event, dict)
+    assert isinstance(first_event.get("event_id"), str)
+    assert isinstance(first_event.get("event_type"), str)
+    assert isinstance(first_event.get("phase"), str)
+    assert isinstance(first_event.get("lane_id"), str)
     details = first_event.get("details", {})
     assert isinstance(details, dict)
     assert isinstance(details.get("inputs"), dict)
     assert isinstance(details.get("outputs"), dict)
     assert isinstance(details.get("artifacts"), list)
+
+    thread_payload = json.loads((run_dir / "debug" / "message_threads.json").read_text(encoding="utf-8"))
+    assert thread_payload.get("schema_version") == "inbox_threads_v1"
+    assert int(thread_payload.get("message_count", 0) or 0) >= 1
+    assert isinstance(thread_payload.get("threads"), list)

@@ -26,6 +26,8 @@
    - 本地 Streamlit 可视化测试台（含新交互式 Agent Team UI）
 2. [OPENSPEC_PROJECT_PLAYBOOK.md](./OPENSPEC_PROJECT_PLAYBOOK.md)
    - OpenSpec 变更管理与校验
+3. [DEBUG_BACKEND_COMM_INSIGHTS_ZH.md](./DEBUG_BACKEND_COMM_INSIGHTS_ZH.md)
+   - Debug v2 改造与后端/Agent 通信模式优化启发
 
 ## 4. 维护/历史文档
 

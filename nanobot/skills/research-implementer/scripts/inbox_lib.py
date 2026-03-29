@@ -101,6 +101,8 @@ def send_message(
     correlation_id: str,
     payload: dict[str, Any] | None = None,
     reply_to: str = "",
+    call_id: str = "",
+    thread_id: str = "",
     priority: str = "normal",
     artifacts: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -115,7 +117,9 @@ def send_message(
         "to": to_norm,
         "type": message_type.strip(),
         "priority": (priority.strip() or "normal").lower(),
+        "call_id": call_id.strip() or f"call_{uuid4().hex[:16]}",
         "correlation_id": correlation_id.strip(),
+        "thread_id": thread_id.strip() or correlation_id.strip(),
         "reply_to": reply_to.strip(),
         "ts_utc": _utc_now(),
         "payload": payload or {},

@@ -29,7 +29,9 @@ class RunFiles:
     run_dir: Path
     trace_json: Path
     trace_jsonl: Path
+    trace_health_json: Path
     trace_md: Path
+    message_threads_json: Path
     pipeline_summary: Path
     final_conclusion_json: Path
     final_conclusion_md: Path
@@ -50,7 +52,9 @@ def _run_files(run_root: Path, run_id: str) -> RunFiles:
         run_dir=run_dir,
         trace_json=run_dir / "debug" / "runtime_trace.json",
         trace_jsonl=run_dir / "debug" / "runtime_trace.jsonl",
+        trace_health_json=run_dir / "debug" / "runtime_trace_health.json",
         trace_md=run_dir / "debug" / "runtime_trace.md",
+        message_threads_json=run_dir / "debug" / "message_threads.json",
         pipeline_summary=run_dir / "deliverables" / "pipeline_summary_inbox.json",
         final_conclusion_json=run_dir / "deliverables" / "final_conclusion_inbox.json",
         final_conclusion_md=run_dir / "deliverables" / "final_conclusion_inbox.md",
@@ -87,7 +91,7 @@ def _safe_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _load_trace_events(files: RunFiles) -> list[dict[str, Any]]:
-    payload = _safe_json(files.trace_json)
+    payload = _load_trace_payload(files)
     if isinstance(payload, dict) and isinstance(payload.get("events"), list):
         events: list[dict[str, Any]] = []
         for event in payload["events"]:
@@ -95,6 +99,13 @@ def _load_trace_events(files: RunFiles) -> list[dict[str, Any]]:
                 events.append(event)
         return events
     return _safe_jsonl(files.trace_jsonl)
+
+
+def _load_trace_payload(files: RunFiles) -> dict[str, Any] | None:
+    payload = _safe_json(files.trace_json)
+    if isinstance(payload, dict):
+        return payload
+    return None
 
 
 def _team_stats(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -207,24 +218,55 @@ def _candidate_count(candidates_file: Path) -> int:
     return size
 
 
-def _render_event_detail(events: list[dict[str, Any]]) -> None:
+def _render_event_detail(events: list[dict[str, Any]], trace_payload: dict[str, Any] | None) -> None:
     st.subheader("Pipeline Step Debug I/O")
     if not events:
         st.info("未找到调试事件。请先运行一次 Team+Inbox 全流程。")
         return
 
+    lane_names = sorted({str(event.get("lane_id", "")).strip() for event in events if str(event.get("lane_id", "")).strip()})
+    event_types = sorted({str(event.get("event_type", "")).strip() for event in events if str(event.get("event_type", "")).strip()})
+    phase_names = sorted({str(event.get("phase", "")).strip() for event in events if str(event.get("phase", "")).strip()})
     step_names = [str(event.get("step", "")) for event in events]
+
+    if isinstance(trace_payload, dict):
+        summary = trace_payload.get("summary", {})
+        if isinstance(summary, dict):
+            col_a, col_b, col_c, col_d = st.columns(4)
+            with col_a:
+                st.metric("事件总数", int(summary.get("event_count", len(events)) or len(events)))
+            with col_b:
+                st.metric("Lane 数", int(trace_payload.get("lane_count", len(lane_names)) or len(lane_names)))
+            with col_c:
+                st.metric("开放调用数", int(summary.get("open_call_count", 0) or 0))
+            with col_d:
+                st.metric("异常 phase 数", int(summary.get("invalid_phase_events", 0) or 0))
+
     idx = st.slider("按事件索引回放", min_value=1, max_value=len(events), value=len(events), step=1)
     current = events[idx - 1]
 
+    selected_lane = st.selectbox("按 lane 过滤", options=["(all)"] + lane_names, index=0)
+    selected_event_type = st.selectbox("按 event_type 过滤", options=["(all)"] + event_types, index=0)
+    selected_phase = st.selectbox("按 phase 过滤", options=["(all)"] + phase_names, index=0)
     selected_step = st.selectbox("按步骤过滤", options=["(all)"] + sorted(set(step_names)), index=0)
+    call_id_pick = st.text_input("按 call_id 过滤（可选）").strip()
+    message_id_pick = st.text_input("按 message_id 过滤（可选）").strip()
+
     filtered = events
+    if selected_lane != "(all)":
+        filtered = [event for event in filtered if str(event.get("lane_id", "")) == selected_lane]
+    if selected_event_type != "(all)":
+        filtered = [event for event in filtered if str(event.get("event_type", "")) == selected_event_type]
+    if selected_phase != "(all)":
+        filtered = [event for event in filtered if str(event.get("phase", "")) == selected_phase]
     if selected_step != "(all)":
-        filtered = [event for event in events if str(event.get("step", "")) == selected_step]
+        filtered = [event for event in filtered if str(event.get("step", "")) == selected_step]
+    if call_id_pick:
+        filtered = [event for event in filtered if str(event.get("call_id", "")).strip() == call_id_pick]
+    if message_id_pick:
+        filtered = [event for event in filtered if str(event.get("message_id", "")).strip() == message_id_pick]
 
-    st.metric("事件总数", len(events))
     st.metric("过滤后步骤数", len(filtered))
-
     st.markdown("**当前事件详情**")
     st.json(current)
 
@@ -236,7 +278,13 @@ def _render_event_detail(events: list[dict[str, Any]]) -> None:
                 "index": event.get("index", ""),
                 "time_utc": event.get("time_utc", ""),
                 "status": event.get("status", ""),
+                "lane_id": event.get("lane_id", ""),
+                "event_type": event.get("event_type", ""),
+                "phase": event.get("phase", ""),
                 "step": event.get("step", ""),
+                "call_id": event.get("call_id", ""),
+                "message_id": event.get("message_id", ""),
+                "duration_ms": event.get("duration_ms", ""),
                 "message": event.get("message", ""),
                 "input_keys": ",".join(sorted((details.get("inputs", {}) or {}).keys())) if isinstance(details, dict) else "",
                 "output_keys": ",".join(sorted((details.get("outputs", {}) or {}).keys())) if isinstance(details, dict) else "",
@@ -244,6 +292,42 @@ def _render_event_detail(events: list[dict[str, Any]]) -> None:
         )
 
     st.dataframe(preview_rows, use_container_width=True, hide_index=True)
+
+
+def _render_thread_diagnostics(files: RunFiles, messages: list[dict[str, Any]]) -> None:
+    st.subheader("通信线程与回包健康度")
+    payload = _safe_json(files.message_threads_json)
+    if not isinstance(payload, dict):
+        st.info("未找到 message_threads.json，显示在线计算的基础统计。")
+        if not messages:
+            return
+        grouped: dict[str, int] = defaultdict(int)
+        for msg in messages:
+            key = str(msg.get("thread_id", "")).strip() or str(msg.get("correlation_id", "")).strip() or "unthreaded"
+            grouped[key] += 1
+        rows = [{"thread_id": key, "message_count": count} for key, count in sorted(grouped.items(), key=lambda item: (-item[1], item[0]))]
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+        return
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("消息总数", int(payload.get("message_count", 0) or 0))
+    with col2:
+        st.metric("线程数", int(payload.get("thread_count", 0) or 0))
+    with col3:
+        st.metric("reply 边数", int(payload.get("reply_edge_count", 0) or 0))
+    with col4:
+        st.metric("孤儿 reply", int(payload.get("orphan_reply_count", 0) or 0))
+
+    threads = payload.get("threads", [])
+    if isinstance(threads, list) and threads:
+        st.markdown("**线程统计（Top）**")
+        st.dataframe(threads[:30], use_container_width=True, hide_index=True)
+
+    orphans = payload.get("orphan_replies", [])
+    if isinstance(orphans, list) and orphans:
+        st.markdown("**孤儿 reply（需排查）**")
+        st.dataframe(orphans, use_container_width=True, hide_index=True)
 
 
 def _round_progress(run_dir: Path) -> list[dict[str, Any]]:
@@ -377,10 +461,11 @@ def main() -> None:
     st.code(str(files.run_dir), language="text")
 
     messages = list_inbox_messages(files.run_dir)
+    trace_payload = _load_trace_payload(files)
     events = _load_trace_events(files)
     team_rows = _team_stats(messages)
 
-    tabs = st.tabs(["总览", "交互流程", "步骤调试 I/O", "Inbox 消息", "交付结果", "帮助"])
+    tabs = st.tabs(["总览", "交互流程", "步骤调试 I/O", "通信线程", "Inbox 消息", "交付结果", "帮助"])
 
     with tabs[0]:
         st.subheader("运行总览")
@@ -403,6 +488,17 @@ def main() -> None:
             if isinstance(summary, dict):
                 winner = str(summary.get("winner_candidate", "-"))
             st.metric("最终胜出", winner)
+
+        if isinstance(trace_payload, dict):
+            trace_summary = trace_payload.get("summary", {})
+            if isinstance(trace_summary, dict):
+                col5, col6, col7 = st.columns(3)
+                with col5:
+                    st.metric("Trace Schema", str(trace_payload.get("schema_version", "-")))
+                with col6:
+                    st.metric("Trace Lanes", int(trace_payload.get("lane_count", 0) or 0))
+                with col7:
+                    st.metric("Open Calls", int(trace_summary.get("open_call_count", 0) or 0))
 
         if isinstance(review, dict):
             st.markdown("**Reviewer 输出**")
@@ -447,9 +543,12 @@ def main() -> None:
             st.dataframe(_edge_rows(messages), use_container_width=True, hide_index=True)
 
     with tabs[2]:
-        _render_event_detail(events)
+        _render_event_detail(events, trace_payload)
 
     with tabs[3]:
+        _render_thread_diagnostics(files, messages)
+
+    with tabs[4]:
         st.subheader("Inbox 消息浏览")
         if not messages:
             st.info("暂无 Inbox 消息。")
@@ -499,12 +598,14 @@ def main() -> None:
                 else:
                     st.warning("未找到该消息 ID。")
 
-    with tabs[4]:
+    with tabs[5]:
         st.subheader("交付结果")
         for title, path in [
             ("pipeline_summary_inbox.json", files.pipeline_summary),
             ("final_conclusion_inbox.json", files.final_conclusion_json),
             ("review_feedback.json", files.review_feedback),
+            ("runtime_trace_health.json", files.trace_health_json),
+            ("message_threads.json", files.message_threads_json),
         ]:
             st.markdown(f"**{title}**")
             payload = _safe_json(path)
@@ -519,11 +620,12 @@ def main() -> None:
         else:
             st.info("未找到 runtime_trace.md")
 
-    with tabs[5]:
+    with tabs[6]:
         st.subheader("说明")
         st.write("1. 推荐先用 CLI 跑 `run_inbox_cycle.py`，再用本 UI 做交互分析。")
-        st.write("2. 步骤调试页读取 `debug/runtime_trace.json`，可看到每一步输入/输出/工件。")
-        st.write("3. 若要模拟 learn-claude-code 的 Team 协作观感，重点看“交互流程”页签。")
+        st.write("2. 步骤调试页读取 `debug/runtime_trace.json`，支持 lane/call_id/message_id 过滤。")
+        st.write("3. 通信线程页读取 `debug/message_threads.json`，可定位孤儿 reply 与线程密度。")
+        st.write("4. 若要模拟 learn-claude-code 的 Team 协作观感，重点看“交互流程”与“通信线程”页签。")
         st.code("streamlit run apps/research_team_interactive_ui.py", language="bash")
 
 

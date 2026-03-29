@@ -90,6 +90,12 @@ nanobot gateway
 streamlit run apps/research_team_interactive_ui.py
 ```
 
+调试产物（Debug v2）：
+
+1. `debug/runtime_trace.json`：lane + call/message 级结构化事件
+2. `debug/runtime_trace_health.json`：open calls / phase 健康度摘要
+3. `debug/message_threads.json`：thread/reply 链路与孤儿回复诊断
+
 ## 📢 News
 
 > [!IMPORTANT]

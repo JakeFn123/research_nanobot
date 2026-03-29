@@ -50,15 +50,17 @@ streamlit run apps/research_flow_ui.py
 1. `总览`
 2. `交互流程`
 3. `步骤调试 I/O`
-4. `Inbox 消息`
-5. `交付结果`
-6. `帮助`
+4. `通信线程`
+5. `Inbox 消息`
+6. `交付结果`
+7. `帮助`
 
 其中：
 
 1. `交互流程`：角色卡片 + Agent Team 消息流图 + 边统计
-2. `步骤调试 I/O`：按步骤查看每个 pipeline 事件输入/输出/工件
-3. `Inbox 消息`：按角色/类型/轮次过滤并查看具体消息
+2. `步骤调试 I/O`：按 `lane/event_type/phase/call_id/message_id` 查看每个 pipeline 事件输入/输出/工件
+3. `通信线程`：查看 `thread_id` 聚合、reply 边、孤儿回复（orphan reply）
+4. `Inbox 消息`：按角色/类型/轮次过滤并查看具体消息
 
 ## 5. 推荐使用方式
 
@@ -70,6 +72,7 @@ streamlit run apps/research_flow_ui.py
 4. 在页签查看：
    - `交互流程`（消息流图）
    - `步骤调试 I/O`（完整步骤日志）
+   - `通信线程`（线程级健康度）
    - `交付结果`
 
 ### 方式 B：CLI 跑主流程，UI 看日志
@@ -94,6 +97,7 @@ streamlit run apps/research_flow_ui.py
 2. 打开 UI，将 `Run Root` 和 `Run ID` 指向上述 run。
 3. 在 `Inbox 消息` 页签按角色/消息类型/轮次过滤消息。
 4. 在 `步骤调试 I/O` 页签查看 `runtime_trace` 结构化事件。
+5. 在 `通信线程` 页签查看 `message_threads.json` 的线程链路与异常回包。
 
 ### 方式 C：在兼容 UI 内执行旧流程（可选）
 
@@ -117,9 +121,11 @@ streamlit run apps/research_flow_ui.py
 
 1. `runtime/inbox/*.jsonl` 已生成
 2. `debug/runtime_trace.json` 有完整步骤输入/输出
-3. `debug/runtime_trace.md` 有可读时间线
-4. `review/review_feedback.json` 有 `approved` 与 `evidence`
-5. `deliverables/final_conclusion_inbox.json` 已生成
+3. `debug/runtime_trace_health.json` 有 open_call / phase 健康度
+4. `debug/message_threads.json` 有 thread/reply 诊断
+5. `debug/runtime_trace.md` 有可读时间线
+6. `review/review_feedback.json` 有 `approved` 与 `evidence`
+7. `deliverables/final_conclusion_inbox.json` 已生成
 
 ## 8. 常见问题
 
