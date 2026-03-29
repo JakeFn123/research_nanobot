@@ -1,0 +1,20 @@
+{
+  "hard_requirements": [
+    "shared board can be initialized",
+    "worker digests can be published",
+    "peer feedback can be merged",
+    "agenda can be generated from board findings",
+    "review feedback can be generated with tool evidence",
+    "final conclusion artifacts can be generated"
+  ],
+  "soft_requirements": [
+    "defense quality improves over three rounds",
+    "workers integrate peer critiques into next iteration",
+    "final recommendation includes deployment guardrails",
+    "tradeoff among safety utility latency is explicit"
+  ],
+  "review_checks": [
+    {"name": "validate_inbox_envelope", "tool": "exec", "required": true},
+    {"name": "validate_candidate_coverage", "tool": "exec", "required": true}
+  ]
+}

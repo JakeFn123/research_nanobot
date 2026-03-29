@@ -1,0 +1,14 @@
+[
+  {
+    "candidateId": "candidate_01",
+    "name": "Adversarial Curriculum + Retrieval Guardrails"
+  },
+  {
+    "candidateId": "candidate_02",
+    "name": "Constitutional Debate + Formal Policy Checker"
+  },
+  {
+    "candidateId": "candidate_03",
+    "name": "Red-Team Self-Play + Neuro-Symbolic Runtime Monitor"
+  }
+]
