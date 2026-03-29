@@ -1,0 +1,27 @@
+[
+  {
+    "candidateId": "candidate_01",
+    "name": "Physics-Informed Bayesian Lab Planner",
+    "goal": "Use Bayesian active design with mechanistic priors to prioritize safe high-value experiments."
+  },
+  {
+    "candidateId": "candidate_02",
+    "name": "Program-Synthesis Experiment Compiler",
+    "goal": "Compile protocol graphs into executable robotic workflows with automatic validity checks."
+  },
+  {
+    "candidateId": "candidate_03",
+    "name": "Debate-Verifier Mechanistic Ensemble",
+    "goal": "Run adversarial specialist debates and verifier consensus for mechanism-grounded decisions."
+  },
+  {
+    "candidateId": "candidate_04",
+    "name": "Causal Transfer Twin with Domain Adaptation",
+    "goal": "Leverage cross-lab causal transport to reduce data requirements under domain shift."
+  },
+  {
+    "candidateId": "candidate_05",
+    "name": "Hierarchical RL + Constraint Guardian",
+    "goal": "Optimize long-horizon experiment policies with hard safety and budget-aware control."
+  }
+]

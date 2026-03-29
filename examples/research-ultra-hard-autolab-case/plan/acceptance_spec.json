@@ -11,33 +11,30 @@
     "worker notes record adopted and rejected peer ideas"
   ],
   "soft_requirements": [
-    "global findings identify strengths and failures",
-    "worker actions reflect peer feedback"
+    "uncertainty should decrease across rounds for top candidates",
+    "safety violations should trend downward across rounds",
+    "cross-candidate insight transfer should be visible in proposals",
+    "final recommendation should balance quality, safety, and cost"
   ],
   "review_checks": [
     {
       "name": "validate_inbox_envelope",
-      "tool": "exec",
       "required": true
     },
     {
       "name": "validate_candidate_coverage",
-      "tool": "exec",
       "required": true
     },
     {
       "name": "validate_execution_evidence",
-      "tool": "exec",
       "required": true
     },
     {
       "name": "verify_report_metric_consistency",
-      "tool": "exec",
       "required": true
     },
     {
       "name": "require_worker_notes_evidence",
-      "tool": "exec",
       "required": true
     }
   ]

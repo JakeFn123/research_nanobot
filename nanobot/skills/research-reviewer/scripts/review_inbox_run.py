@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -28,8 +30,6 @@ REQUIRED_ENVELOPE = {
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    import json
-
     rows: list[dict[str, Any]] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         text = line.strip()
@@ -62,6 +62,207 @@ def _extract_candidates(path: Path) -> list[str]:
     return out
 
 
+def _coerce_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_path(run_dir: Path, raw: str) -> Path:
+    text = raw.strip()
+    if not text:
+        return Path()
+    path = Path(text)
+    if path.is_absolute():
+        return path
+    if path.exists():
+        return path
+    return run_dir / path
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _latest_worker_updates(
+    *,
+    inbox_rows: dict[str, list[dict[str, Any]]],
+    candidate_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    implementer_rows = inbox_rows.get("implementer", [])
+    latest: dict[str, dict[str, Any]] = {}
+    for row in implementer_rows:
+        if str(row.get("type", "")) != "worker_round_update":
+            continue
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        candidate_id = str(payload.get("candidate_id", "")).strip()
+        if candidate_id not in candidate_ids:
+            continue
+        round_idx = int(row.get("round", 0) or 0)
+        prev = latest.get(candidate_id)
+        prev_round = int(prev.get("round", 0) or 0) if prev else -1
+        if round_idx >= prev_round:
+            latest[candidate_id] = row
+    return latest
+
+
+def _check_inbox_metric_consistency(
+    *,
+    run_dir: Path,
+    inbox_rows: dict[str, list[dict[str, Any]]],
+    candidate_ids: list[str],
+) -> tuple[bool, str]:
+    updates = _latest_worker_updates(inbox_rows=inbox_rows, candidate_ids=candidate_ids)
+    issues: list[str] = []
+    for candidate_id in candidate_ids:
+        row = updates.get(candidate_id)
+        if not isinstance(row, dict):
+            issues.append(f"{candidate_id}: missing worker_round_update")
+            continue
+        payload = row.get("payload", {})
+        if not isinstance(payload, dict):
+            issues.append(f"{candidate_id}: payload is not object")
+            continue
+        report_path = _resolve_path(run_dir, str(payload.get("private_report_ref", "")))
+        metrics_path = report_path.with_name("metrics.json")
+        if not report_path.exists():
+            issues.append(f"{candidate_id}: report not found ({report_path})")
+            continue
+        if not metrics_path.exists():
+            issues.append(f"{candidate_id}: metrics not found ({metrics_path})")
+            continue
+        metrics = load_json(metrics_path)
+        if not isinstance(metrics, dict):
+            issues.append(f"{candidate_id}: metrics file is not JSON object")
+            continue
+        payload_core = payload.get("core_metrics", {})
+        if not isinstance(payload_core, dict):
+            payload_core = {}
+        payload_primary = _coerce_float(payload_core.get("primary_metric"))
+        metrics_primary = _coerce_float(metrics.get("primary_metric", metrics.get("primary")))
+        if payload_primary is None or metrics_primary is None:
+            issues.append(f"{candidate_id}: missing primary metric in payload/metrics")
+            continue
+        if abs(payload_primary - metrics_primary) > 1e-9:
+            issues.append(f"{candidate_id}: primary mismatch payload={payload_primary} metrics={metrics_primary}")
+
+    if issues:
+        return False, "; ".join(issues)
+    return True, "worker payload primary metrics match metrics.json for all candidates"
+
+
+def _check_worker_notes_evidence(
+    *,
+    run_dir: Path,
+    inbox_rows: dict[str, list[dict[str, Any]]],
+    candidate_ids: list[str],
+) -> tuple[bool, str]:
+    updates = _latest_worker_updates(inbox_rows=inbox_rows, candidate_ids=candidate_ids)
+    required_sections = [
+        "borrowed peer ideas",
+        "rejected peer ideas",
+        "changed implementation",
+        "result change",
+    ]
+    issues: list[str] = []
+    for candidate_id in candidate_ids:
+        row = updates.get(candidate_id)
+        if not isinstance(row, dict):
+            issues.append(f"{candidate_id}: missing worker_round_update")
+            continue
+        payload = row.get("payload", {})
+        if not isinstance(payload, dict):
+            issues.append(f"{candidate_id}: payload is not object")
+            continue
+        notes_ref = str(payload.get("notes_ref", "")).strip()
+        if notes_ref:
+            notes_path = _resolve_path(run_dir, notes_ref)
+        else:
+            report_path = _resolve_path(run_dir, str(payload.get("private_report_ref", "")))
+            notes_path = report_path.with_name("notes.md")
+        if not notes_path.exists():
+            issues.append(f"{candidate_id}: notes file missing ({notes_path})")
+            continue
+        text = notes_path.read_text(encoding="utf-8").lower()
+        for section in required_sections:
+            if section not in text:
+                issues.append(f"{candidate_id}: notes missing section '{section}'")
+                break
+
+    if issues:
+        return False, "; ".join(issues)
+    return True, "worker notes include adopted/rejected/change/result evidence for all candidates"
+
+
+def _check_execution_evidence(
+    *,
+    run_dir: Path,
+    inbox_rows: dict[str, list[dict[str, Any]]],
+    candidate_ids: list[str],
+    require_live_mode: bool,
+) -> tuple[bool, str]:
+    updates = _latest_worker_updates(inbox_rows=inbox_rows, candidate_ids=candidate_ids)
+    issues: list[str] = []
+    for candidate_id in candidate_ids:
+        row = updates.get(candidate_id)
+        if not isinstance(row, dict):
+            issues.append(f"{candidate_id}: missing worker_round_update")
+            continue
+        payload = row.get("payload", {})
+        if not isinstance(payload, dict):
+            issues.append(f"{candidate_id}: payload is not object")
+            continue
+
+        execution_mode = str(payload.get("execution_mode", "")).strip()
+        if not execution_mode:
+            issues.append(f"{candidate_id}: missing execution_mode")
+            continue
+        if require_live_mode and execution_mode == "replay_import":
+            issues.append(f"{candidate_id}: execution_mode is replay_import (live required)")
+
+        report_path = _resolve_path(run_dir, str(payload.get("private_report_ref", "")))
+        metrics_path = report_path.with_name("metrics.json")
+        if not report_path.exists() or not metrics_path.exists():
+            issues.append(f"{candidate_id}: missing report/metrics artifacts")
+            continue
+
+        log_path = _resolve_path(run_dir, str(payload.get("execution_log_ref", "")))
+        if not log_path.exists():
+            issues.append(f"{candidate_id}: execution_log missing ({log_path})")
+            continue
+        log_payload = load_json(log_path)
+        if not isinstance(log_payload, dict):
+            issues.append(f"{candidate_id}: execution_log is not JSON object")
+            continue
+
+        log_mode = str(log_payload.get("execution_mode", "")).strip()
+        if log_mode != execution_mode:
+            issues.append(f"{candidate_id}: execution_mode mismatch payload={execution_mode} log={log_mode}")
+
+        output_hashes = log_payload.get("output_hashes", {})
+        if not isinstance(output_hashes, dict):
+            output_hashes = {}
+        expected_report_hash = str(output_hashes.get("report_sha256", "")).strip()
+        expected_metrics_hash = str(output_hashes.get("metrics_sha256", "")).strip()
+        if not expected_report_hash or not expected_metrics_hash:
+            issues.append(f"{candidate_id}: execution_log missing output hashes")
+            continue
+
+        if _sha256(report_path) != expected_report_hash:
+            issues.append(f"{candidate_id}: report hash mismatch")
+        if _sha256(metrics_path) != expected_metrics_hash:
+            issues.append(f"{candidate_id}: metrics hash mismatch")
+
+    if issues:
+        return False, "; ".join(issues)
+    return True, "execution logs and artifact hashes are valid for all candidates"
+
+
 def _check_hard_requirement(
     requirement: str,
     *,
@@ -73,8 +274,6 @@ def _check_hard_requirement(
     all_rows = [row for rows in inbox_rows.values() for row in rows]
 
     if req == "shared board can be initialized":
-        # In inbox mode, planner may only receive the final package later in the pipeline.
-        # At review time we require active runtime channels (implementer/reviewer/workers).
         expected_roles = ["implementer", "reviewer"] + [f"worker_{i + 1:02d}" for i in range(len(candidate_ids))]
         missing = [role for role in expected_roles if role not in inbox_rows]
         return len(missing) == 0, "inbox channels initialized" if not missing else f"missing inbox roles: {', '.join(missing)}"
@@ -90,11 +289,7 @@ def _check_hard_requirement(
         return ok, "worker_round_update exists for all candidates"
 
     if req == "peer feedback can be merged":
-        count = sum(
-            1
-            for row in all_rows
-            if str(row.get("type", "")) in {"peer_key_insight", "improvement_proposal"}
-        )
+        count = sum(1 for row in all_rows if str(row.get("type", "")) in {"peer_key_insight", "improvement_proposal"})
         return count > 0, f"peer insight/improvement messages: {count}"
 
     if req == "agenda can be generated from board findings":
@@ -105,49 +300,110 @@ def _check_hard_requirement(
         return True, "review tool executed and evidence generated"
 
     if req == "final conclusion artifacts can be generated":
-        # This check runs before final packaging, so verify prerequisites instead of the
-        # already-generated deliverable files.
         summary_dir = run_dir / "runtime" / "round_summaries"
         has_round_summary = summary_dir.exists() and any(summary_dir.glob("round_*.json"))
         review_request_count = sum(1 for row in all_rows if str(row.get("type", "")) == "review_request")
         ok = has_round_summary and review_request_count > 0
-        note = (
-            f"round_summaries_ready={str(has_round_summary).lower()}, review_request_messages={review_request_count}"
-        )
+        note = f"round_summaries_ready={str(has_round_summary).lower()}, review_request_messages={review_request_count}"
         return ok, note
+
+    if req == "main experiment can be reproduced":
+        return _check_execution_evidence(
+            run_dir=run_dir,
+            inbox_rows=inbox_rows,
+            candidate_ids=candidate_ids,
+            require_live_mode=True,
+        )
+
+    if req == "report uses actual measured metrics":
+        return _check_inbox_metric_consistency(
+            run_dir=run_dir,
+            inbox_rows=inbox_rows,
+            candidate_ids=candidate_ids,
+        )
+
+    if req == "worker notes record adopted and rejected peer ideas":
+        return _check_worker_notes_evidence(
+            run_dir=run_dir,
+            inbox_rows=inbox_rows,
+            candidate_ids=candidate_ids,
+        )
 
     return False, f"unsupported hard requirement: {requirement}"
 
 
 def _run_review_checks(
     *,
+    run_dir: Path,
     inbox_rows: dict[str, list[dict[str, Any]]],
     candidate_ids: list[str],
+    acceptance: dict[str, Any],
 ) -> list[tuple[str, bool, str]]:
+    configured = acceptance.get("review_checks", [])
+    if not isinstance(configured, list):
+        configured = []
+    if not configured:
+        configured = [
+            {"name": "validate_inbox_envelope", "required": True},
+            {"name": "validate_candidate_coverage", "required": True},
+        ]
+
     checks: list[tuple[str, bool, str]] = []
+    for row in configured:
+        if not isinstance(row, dict):
+            checks.append(("unknown_check", False, "review_checks row must be a JSON object"))
+            continue
+        name = str(row.get("name", "unknown_check")).strip() or "unknown_check"
+        required = bool(row.get("required", True))
+        normalized = name.lower()
 
-    # Envelope shape check
-    bad: list[str] = []
-    for role, rows in inbox_rows.items():
-        for idx, row in enumerate(rows, start=1):
-            missing = sorted(REQUIRED_ENVELOPE - set(row))
-            if missing:
-                bad.append(f"{role}#{idx}: missing {', '.join(missing)}")
-    checks.append(("validate_inbox_envelope", len(bad) == 0, "all messages include required envelope fields" if not bad else "; ".join(bad[:3])))
+        if normalized == "validate_inbox_envelope":
+            bad: list[str] = []
+            for role, rows in inbox_rows.items():
+                for idx, item in enumerate(rows, start=1):
+                    missing = sorted(REQUIRED_ENVELOPE - set(item))
+                    if missing:
+                        bad.append(f"{role}#{idx}: missing {', '.join(missing)}")
+            ok = len(bad) == 0
+            note = "all messages include required envelope fields" if ok else "; ".join(bad[:3])
+        elif normalized == "validate_candidate_coverage":
+            implementer_rows = inbox_rows.get("implementer", [])
+            seen = {
+                str((item.get("payload") or {}).get("candidate_id", "")).strip()
+                for item in implementer_rows
+                if str(item.get("type", "")) == "worker_round_update"
+            }
+            missing_candidates = [cid for cid in candidate_ids if cid not in seen]
+            ok = len(missing_candidates) == 0
+            note = "all candidates emitted worker_round_update" if ok else f"missing: {', '.join(missing_candidates)}"
+        elif normalized == "validate_execution_evidence":
+            ok, note = _check_execution_evidence(
+                run_dir=run_dir,
+                inbox_rows=inbox_rows,
+                candidate_ids=candidate_ids,
+                require_live_mode=False,
+            )
+        elif normalized == "verify_report_metric_consistency":
+            ok, note = _check_inbox_metric_consistency(
+                run_dir=run_dir,
+                inbox_rows=inbox_rows,
+                candidate_ids=candidate_ids,
+            )
+        elif normalized == "require_worker_notes_evidence":
+            ok, note = _check_worker_notes_evidence(
+                run_dir=run_dir,
+                inbox_rows=inbox_rows,
+                candidate_ids=candidate_ids,
+            )
+        else:
+            ok = False
+            note = f"unsupported inbox review check: {name}"
 
-    # Candidate coverage check
-    implementer_rows = inbox_rows.get("implementer", [])
-    seen = {
-        str((row.get("payload") or {}).get("candidate_id", "")).strip()
-        for row in implementer_rows
-        if str(row.get("type", "")) == "worker_round_update"
-    }
-    missing_candidates = [cid for cid in candidate_ids if cid not in seen]
-    checks.append((
-        "validate_candidate_coverage",
-        len(missing_candidates) == 0,
-        "all candidates emitted worker_round_update" if not missing_candidates else f"missing: {', '.join(missing_candidates)}",
-    ))
+        if not required and not ok:
+            checks.append((name, True, f"optional check failed but ignored: {note}"))
+        else:
+            checks.append((name, ok, note))
+
     return checks
 
 
@@ -214,7 +470,12 @@ def review_inbox_run(
         if not ok:
             must_fix.append(req)
 
-    checks = _run_review_checks(inbox_rows=inbox_rows, candidate_ids=candidate_ids)
+    checks = _run_review_checks(
+        run_dir=run_dir,
+        inbox_rows=inbox_rows,
+        candidate_ids=candidate_ids,
+        acceptance=acceptance,
+    )
     for name, ok, note in checks:
         evidence.append(f"{name}: {'PASS' if ok else 'FAIL'} | {note}")
         if not ok:

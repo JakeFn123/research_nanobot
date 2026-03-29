@@ -67,7 +67,17 @@ streamlit run apps/research_flow_ui.py
 ### 方式 A：在新 UI 直接跑主流程（推荐）
 
 1. 打开 `research_team_interactive_ui.py`
-2. 左侧填写 `Run Root / Run ID / Problem / plan / reports`
+2. 左侧填写 `Run Root / Run ID / Problem / plan`
+3. 选择 `Execution Mode`：
+   - `live`：真实执行 Worker 实验（推荐）
+   - `replay`：复放预置报告
+   - `auto`：有预置则复放，否则 live
+   - 若验收包含真实性硬约束（reproduce/actual metrics），请优先 `live`
+4. 选择 `Worker Executor`：
+   - `codex`：Worker 直接调用 `codex exec` 执行任务（推荐）
+   - `simulation`：使用内置仿真实验执行器
+5. 若要强制不回退，勾选 `Require Codex Success`
+6. 若使用 `replay/auto`，再填写 `Reports Dir`
 3. 点击 `运行 Team+Inbox`
 4. 在页签查看：
    - `交互流程`（消息流图）
@@ -87,7 +97,7 @@ streamlit run apps/research_flow_ui.py
   --candidate-count 3 \
   --max-rounds 3 \
   --max-review-cycles 2 \
-  --reports-root examples/research-e2e-ai-case/reports \
+  --execution-mode live \
   --candidates-file examples/research-e2e-ai-case/plan/candidates.json \
   --acceptance-file examples/research-e2e-ai-case/plan/acceptance_spec.json \
   --strict-round-artifacts \
@@ -107,7 +117,7 @@ streamlit run apps/research_flow_ui.py
 
 ## 6. 输入命名约定
 
-### Team+Inbox 主流程（CLI）
+### Team+Inbox 主流程（CLI，replay 模式）
 
 - 报告：`<candidate_id>_round_<n>_report.md`
 - 指标：`<candidate_id>_round_<n>_metrics.json`
@@ -116,6 +126,10 @@ streamlit run apps/research_flow_ui.py
 
 - `examples/research-e2e-ai-case/reports/`
 - `examples/research-hard-safety-case/reports/`
+
+live 模式下这些文件会由系统在运行时自动生成到：
+
+- `run_dir/implementation/<candidate>/round_<n>/`
 
 ## 7. 验收检查清单
 
@@ -126,6 +140,7 @@ streamlit run apps/research_flow_ui.py
 5. `debug/runtime_trace.md` 有可读时间线
 6. `review/review_feedback.json` 有 `approved` 与 `evidence`
 7. `deliverables/final_conclusion_inbox.json` 已生成
+8. `implementation/*/round_*/execution_log.json` 已生成（live 模式）
 
 ## 8. 常见问题
 
@@ -136,8 +151,8 @@ streamlit run apps/research_flow_ui.py
 
 ### 8.2 一键全流程与主架构不一致
 
-- 这是兼容性行为：UI 按钮仍走旧流程。
-- 主架构验证请用 `research_team_interactive_ui.py` 或 CLI + 新 UI 观察模式。
+- 请确认你使用的是 `research_team_interactive_ui.py`。
+- 该 UI 的 `运行 Team+Inbox` 按钮走 `run_inbox_cycle.py` 主流程。
 
 ### 8.3 文件路径报错
 

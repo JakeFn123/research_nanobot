@@ -30,8 +30,19 @@
 推荐主执行脚本：
 
 ```bash
-.venv/bin/python nanobot/skills/research-implementer/scripts/run_inbox_cycle.py ...
+.venv/bin/python nanobot/skills/research-implementer/scripts/run_inbox_cycle.py \
+  --execution-mode live \
+  --worker-executor codex \
+  --run-root .demo_runs_backend \
+  --run-id demo_live_001 \
+  --problem "Your research problem"
 ```
+
+说明：`execution-mode=live` 为默认推荐模式，Worker 每轮会真实生成 `report/metrics/execution_log/notes`；若要复放历史报告可使用 `replay`。
+
+设计与实现一致性复查文档：
+
+- [`docs/DESIGN_IMPL_ALIGNMENT_AUDIT_ZH.md`](./docs/DESIGN_IMPL_ALIGNMENT_AUDIT_ZH.md)
 
 推荐文档阅读顺序：
 

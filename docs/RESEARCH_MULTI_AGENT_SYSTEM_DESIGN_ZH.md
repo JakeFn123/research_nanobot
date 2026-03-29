@@ -43,6 +43,7 @@
 3. `Worker_i`
    - 按指定候选方案实现与实验
    - 产出私有完整报告（仅本 Worker 可见）
+   - 产出私有实验执行日志（`execution_log.json`）与轮次笔记（`notes.md`）
    - 对外仅发布结构化关键摘要（inbox 消息）
 4. `ReviewerLead`
    - 基于验收标准执行工具检查
@@ -206,7 +207,25 @@
 3. 维持 Worker “只共享关键结论，不共享完整报告”的协作规则。
 4. 通过工具化评审闭环保障可验收性。
 
-## 10. 小结
+## 10. 设计-实现一致性（2026-03-29）
+
+当前实现已对齐以下关键要求：
+
+1. `ImplementerLead` 不再仅消费预置报告，而是每轮调用 Worker 实验执行器：
+   - `nanobot/skills/research-worker/scripts/execute_worker_experiment.py`
+2. Worker 每轮默认真实执行（`execution_mode=live`）并生成：
+   - `implementation/<candidate>/round_<n>/report.md`
+   - `implementation/<candidate>/round_<n>/metrics.json`
+   - `implementation/<candidate>/round_<n>/execution_log.json`
+   - `implementation/<candidate>/round_<n>/notes.md`
+3. Reviewer 增加真实性校验：
+   - `main experiment can be reproduced`
+   - `report uses actual measured metrics`
+   - `worker notes record adopted and rejected peer ideas`
+4. 打回重做时，`must_fix` 被路由并注入下一轮 Worker 执行上下文。
+5. 讨论仍遵循“仅共享关键结论，不共享完整报告正文”。
+
+## 11. 小结
 
 该设计把“共享黑板协作”升级为“Agent Team + Inbox 协作”：
 
@@ -216,7 +235,7 @@
 4. 打回与重做可编排
 5. 在不动核心内核的前提下，能实现动态科研多智能体闭环
 
-## 11. 参考
+## 12. 参考
 
 1. Agent Team / Inbox 参考文档：
    - https://github.com/shareAI-lab/learn-claude-code/blob/main/docs/en/s09-agent-teams.md

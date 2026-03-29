@@ -70,11 +70,15 @@ pip install -e .[dev,ui]
 
 1. `plan/candidates.json`
 2. `plan/acceptance_spec.json`
-3. 每个候选方案每轮一对工件：
-   - `<candidate_id>_round_<n>_report.md`
-   - `<candidate_id>_round_<n>_metrics.json`
+3. Worker 将在运行时自动生成每轮工件：
+   - `implementation/<candidate_id>/round_<n>/report.md`
+   - `implementation/<candidate_id>/round_<n>/metrics.json`
+   - `implementation/<candidate_id>/round_<n>/execution_log.json`
+   - `implementation/<candidate_id>/round_<n>/notes.md`
 
-推荐 3 轮数据，候选方案数量 3-5。
+可选：若你要复放已有报告，可提供 `--reports-root` 并使用 `--execution-mode replay|auto`。
+
+推荐：3 轮、候选方案数量 3-5。
 
 ## 6. 一键运行（CLI，推荐）
 
@@ -86,7 +90,8 @@ pip install -e .[dev,ui]
   --candidate-count 3 \
   --max-rounds 3 \
   --max-review-cycles 2 \
-  --reports-root examples/research-e2e-ai-case/reports \
+  --execution-mode live \
+  --worker-executor codex \
   --candidates-file examples/research-e2e-ai-case/plan/candidates.json \
   --acceptance-file examples/research-e2e-ai-case/plan/acceptance_spec.json \
   --strict-round-artifacts \
@@ -96,9 +101,19 @@ pip install -e .[dev,ui]
 
 参数说明：
 
-1. `--strict-round-artifacts`：要求每一轮工件必须存在（推荐开启）
-2. `--skip-auto-plan`：不自动生成 plan，使用你给定的计划文件
-3. `--max-review-cycles`：评审打回后的最大重做次数
+1. `--execution-mode`：
+   - `live`：默认，真实执行 Worker 实验并生成工件
+   - `replay`：强制复放 `--reports-root` 的预置工件
+   - `auto`：有可用预置工件则复放，否则转 live
+   - 注意：若验收标准要求“main experiment can be reproduced”，建议使用 `live`
+2. `--reports-root`：仅在 `replay/auto` 需要
+3. `--strict-round-artifacts`：在 replay 模式下要求每轮工件齐全
+4. `--skip-auto-plan`：不自动生成 plan，使用你给定的计划文件
+5. `--max-review-cycles`：评审打回后的最大重做次数
+6. `--worker-executor`：
+   - `codex`：Worker 直接调用 `codex exec` 执行任务（推荐）
+   - `simulation`：使用内置仿真实验执行器
+7. `--require-codex-success`：当 `codex` 执行失败时不允许回退，直接失败（用于强制真实执行）
 
 ## 7. 输出工件解读
 
@@ -113,6 +128,8 @@ pip install -e .[dev,ui]
 - `runtime/round_summaries/round_1.json`
 - `runtime/round_summaries/round_2.json`
 - `runtime/round_summaries/round_3.json`
+- `runtime/experiment_rounds/round_1.json`（每轮实验执行摘要）
+- `implementation/<candidate>/round_<n>/execution_log.json`（可复查实验日志）
 
 ### 7.3 评审层
 
@@ -145,31 +162,31 @@ pip install -e .[dev,ui]
 
 ```bash
 source .venv/bin/activate
-streamlit run apps/research_flow_ui.py
+streamlit run apps/research_team_interactive_ui.py
 ```
 
 UI 主要用于：
 
 1. 本地分步调试
 2. 查看结论与调试日志
-3. 查看 Inbox 消息（`Inbox通信` 页签）
+3. 查看 Inbox 消息、线程链路与执行证据（`总览/步骤调试 I/O/通信线程`）
 
 说明：
 
-- 当前 UI 的“一键全流程”仍兼容旧版 `run_full_cycle.py` 流程。
-- 若你要验证当前主架构，请优先使用 CLI 的 `run_inbox_cycle.py`。
+- 当前推荐 UI 已直接调用 `run_inbox_cycle.py` 主流程。
+- 若你要做批量自动化回归，优先使用 CLI。
 
 ## 10. 常见问题与排错
 
-### 10.1 找不到轮次工件
+### 10.1 Worker 实验执行失败
 
 报错示例：
-- `Missing report/metrics for candidate_xx round N`
+- `worker experiment execution failed`
 
 处理：
-1. 检查命名是否符合规范
-2. 补齐缺失轮次
-3. 或临时关闭严格轮次（不推荐用于正式验收）
+1. 查看 `implementation/<candidate>/round_<n>/execution_log.json`
+2. 若使用外部 command，检查 command 超时和输出路径
+3. 若使用 replay，检查 `--reports-root` 命名是否符合规范
 
 ### 10.2 评审未通过
 

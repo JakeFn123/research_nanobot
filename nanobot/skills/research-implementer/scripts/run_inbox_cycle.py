@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import shutil
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -28,10 +29,11 @@ from digest_report import digest_report
 from generate_plan_bundle import generate_plan_bundle
 from inbox_lib import list_inbox_messages, send_message
 from research_board_lib import extract_candidates, load_json, normalize_lines, save_json
+from execute_worker_experiment import execute_worker_experiment
 from review_inbox_run import review_inbox_run
 from route_review_feedback import route_review_feedback
 from summarize_round_messages import summarize_round_messages
-from worker_round_lib import build_feedback_from_entry, resolve_artifacts
+from worker_round_lib import build_feedback_from_entry
 
 
 def _utc_now() -> str:
@@ -46,7 +48,29 @@ def _candidate_rows(candidates_payload: Any) -> list[dict[str, Any]]:
         if not candidate_id:
             candidate_id = f"candidate_{index:02d}"
         plan_name = str(row.get("name") or row.get("title") or row.get("planName") or candidate_id).strip() or candidate_id
-        out.append({"candidate_id": candidate_id, "plan_name": plan_name, "worker": f"worker_{index:02d}"})
+        out.append(
+            {
+                "candidate_id": candidate_id,
+                "plan_name": plan_name,
+                "worker": f"worker_{index:02d}",
+                "candidate_spec": row if isinstance(row, dict) else {},
+            }
+        )
+    return out
+
+
+def _merge_unique_lines(values: list[str], limit: int = 8) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in values:
+        text = item.strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+        if len(out) >= limit:
+            break
     return out
 
 
@@ -458,6 +482,11 @@ def run_inbox_cycle(
     max_review_cycles: int,
     reports_root: Path | None,
     allow_fallback_rounds: bool,
+    execution_mode: str = "live",
+    worker_executor: str = "codex",
+    require_codex_success: bool = False,
+    codex_model: str = "",
+    worker_command_timeout_sec: int = 900,
     auto_plan: bool,
     candidates_file_input: Path | None,
     acceptance_file_input: Path | None,
@@ -484,6 +513,11 @@ def run_inbox_cycle(
             "max_rounds": max_rounds,
             "max_review_cycles": max_review_cycles,
             "allow_fallback_rounds": allow_fallback_rounds,
+            "execution_mode": execution_mode,
+            "worker_executor": worker_executor,
+            "require_codex_success": require_codex_success,
+            "codex_model": codex_model,
+            "worker_command_timeout_sec": worker_command_timeout_sec,
             "auto_plan": auto_plan,
         },
         outputs={"run_dir": str(run_dir), "inbox_root": str(inbox_root)},
@@ -642,6 +676,16 @@ def run_inbox_cycle(
     )
 
     round_summaries: list[dict[str, Any]] = []
+    peer_context_by_candidate: dict[str, dict[str, list[str]]] = {
+        row["candidate_id"]: {
+            "observed_strengths": [],
+            "observed_weaknesses": [],
+            "borrowable_ideas": [],
+            "suggested_improvement": [],
+        }
+        for row in candidate_rows
+    }
+    pending_must_fix_by_candidate: dict[str, list[str]] = {row["candidate_id"]: [] for row in candidate_rows}
 
     for round_index in range(1, max_rounds + 1):
         _trace_event(
@@ -653,37 +697,82 @@ def run_inbox_cycle(
             outputs={"candidate_count": len(candidate_rows)},
         )
         digests_by_candidate: dict[str, dict[str, Any]] = {}
-
+        task_messages: dict[str, dict[str, Any]] = {}
         for row in candidate_rows:
             candidate_id = row["candidate_id"]
             worker_role = row["worker"]
             plan_name = row["plan_name"]
 
-            task_msg = _publish_message(
+            task_messages[candidate_id] = _publish_message(
                 round_index=round_index,
                 from_role="implementer",
                 to_role=worker_role,
                 message_type="worker_task_assigned",
                 correlation_id=f"task_{candidate_id}_r{round_index}",
-                payload={"candidate_id": candidate_id, "plan_name": plan_name, "round": round_index},
+                payload={
+                    "candidate_id": candidate_id,
+                    "plan_name": plan_name,
+                    "round": round_index,
+                    "peer_hint_count": len(peer_context_by_candidate.get(candidate_id, {}).get("borrowable_ideas", [])),
+                    "must_fix_count": len(pending_must_fix_by_candidate.get(candidate_id, [])),
+                },
                 thread_id=f"thread.task.{candidate_id}",
             )
 
-            report_path, metrics_path, used_round, used_fallback = resolve_artifacts(
+        worker_summaries: dict[str, dict[str, Any]] = {}
+        worker_errors: list[str] = []
+
+        def _worker_job(row: dict[str, Any]) -> dict[str, Any]:
+            candidate_id = row["candidate_id"]
+            return execute_worker_experiment(
                 run_dir=run_dir,
-                reports_root=reports_root,
+                run_id=run_id,
+                problem=problem,
                 candidate_id=candidate_id,
+                plan_name=row["plan_name"],
+                owner=row["worker"],
                 round_index=round_index,
+                candidate_spec=row.get("candidate_spec", {}),
+                peer_context=peer_context_by_candidate.get(candidate_id, {}),
+                must_fix_items=pending_must_fix_by_candidate.get(candidate_id, []),
+                reports_root=reports_root,
                 allow_fallback_rounds=allow_fallback_rounds,
+                execution_mode=execution_mode,
+                worker_executor=worker_executor,
+                require_codex_success=require_codex_success,
+                codex_model=codex_model,
+                command_timeout_sec=worker_command_timeout_sec,
             )
 
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(len(candidate_rows), 8))) as executor:
+            future_map = {executor.submit(_worker_job, row): row for row in candidate_rows}
+            for future in concurrent.futures.as_completed(future_map):
+                row = future_map[future]
+                candidate_id = row["candidate_id"]
+                try:
+                    worker_summaries[candidate_id] = future.result()
+                except Exception as exc:
+                    worker_errors.append(f"{candidate_id}: {exc}")
+
+        if worker_errors:
+            raise RuntimeError("worker experiment execution failed:\n" + "\n".join(worker_errors))
+
+        experiment_rows: list[dict[str, Any]] = []
+        for row in candidate_rows:
+            candidate_id = row["candidate_id"]
+            worker_role = row["worker"]
+            plan_name = row["plan_name"]
+            task_msg = task_messages[candidate_id]
+            worker_summary = worker_summaries[candidate_id]
+            report_path = Path(str(worker_summary.get("report_path", "")))
+            metrics_path = Path(str(worker_summary.get("metrics_path", "")))
             digest_path = run_dir / "runtime" / "private_digests" / f"{candidate_id}_round_{round_index}_digest.json"
             digest = digest_report(
                 report_path=report_path,
                 metrics_path=metrics_path,
                 candidate_id=candidate_id,
                 plan_name=plan_name,
-                round_index=used_round,
+                round_index=round_index,
                 owner=worker_role,
                 output_path=digest_path,
                 status="active",
@@ -702,6 +791,11 @@ def run_inbox_cycle(
                 "open_problems": normalize_lines(digest.get("open_problems")),
                 "next_move": normalize_lines(digest.get("proposed_next_move")),
                 "private_report_ref": str(report_path),
+                "notes_ref": str(worker_summary.get("notes_path", "")),
+                "execution_log_ref": str(worker_summary.get("execution_log_path", "")),
+                "execution_mode": str(worker_summary.get("execution_mode", "")),
+                "duration_ms": int(worker_summary.get("duration_ms", 0) or 0),
+                "input_fingerprint": str(worker_summary.get("input_fingerprint", "")),
             }
             update_msg = _publish_message(
                 round_index=round_index,
@@ -711,11 +805,17 @@ def run_inbox_cycle(
                 correlation_id=f"update_{candidate_id}_r{round_index}",
                 payload=payload,
                 reply_to=str(task_msg.get("id", "")).strip(),
-                artifacts=[str(report_path), str(metrics_path)],
+                artifacts=[
+                    str(report_path),
+                    str(metrics_path),
+                    str(worker_summary.get("notes_path", "")),
+                    str(worker_summary.get("execution_log_path", "")),
+                ],
                 thread_id=f"thread.update.{candidate_id}",
             )
 
             digests_by_candidate[candidate_id] = payload
+            experiment_rows.append(worker_summary)
             _trace_event(
                 tracer=tracer,
                 step=f"round.{round_index}.worker.{candidate_id}",
@@ -727,17 +827,45 @@ def run_inbox_cycle(
                     "task_message_id": task_msg.get("id", ""),
                     "report_path": str(report_path),
                     "metrics_path": str(metrics_path),
+                    "execution_mode": worker_summary.get("execution_mode", ""),
                 },
                 outputs={
                     "digest_path": str(digest_path),
                     "update_message_id": update_msg.get("id", ""),
-                    "used_round": used_round,
-                    "fallback": used_fallback,
+                    "execution_log_path": worker_summary.get("execution_log_path", ""),
+                    "duration_ms": worker_summary.get("duration_ms", 0),
+                    "primary_metric": worker_summary.get("primary_metric"),
                 },
-                artifacts=[str(report_path), str(metrics_path), str(digest_path)],
+                artifacts=[
+                    str(report_path),
+                    str(metrics_path),
+                    str(worker_summary.get("notes_path", "")),
+                    str(worker_summary.get("execution_log_path", "")),
+                    str(digest_path),
+                ],
             )
 
+        experiment_round_path = run_dir / "runtime" / "experiment_rounds" / f"round_{round_index}.json"
+        save_json(
+            experiment_round_path,
+            {
+                "run_id": run_id,
+                "round": round_index,
+                "execution_mode": execution_mode,
+                "workers": experiment_rows,
+            },
+        )
+
         # Peer key insight + improvement proposal exchange
+        next_peer_context: dict[str, dict[str, list[str]]] = {
+            row["candidate_id"]: {
+                "observed_strengths": [],
+                "observed_weaknesses": [],
+                "borrowable_ideas": [],
+                "suggested_improvement": [],
+            }
+            for row in candidate_rows
+        }
         for from_row in candidate_rows:
             from_candidate = from_row["candidate_id"]
             from_worker = from_row["worker"]
@@ -749,6 +877,10 @@ def run_inbox_cycle(
 
                 target_digest = digests_by_candidate.get(to_candidate, {})
                 peer_payload = _peer_payload_from_digest(target_digest)
+                next_peer_context[to_candidate]["observed_strengths"].extend(peer_payload.get("observed_strengths", []))
+                next_peer_context[to_candidate]["observed_weaknesses"].extend(peer_payload.get("observed_weaknesses", []))
+                next_peer_context[to_candidate]["borrowable_ideas"].extend(peer_payload.get("borrowable_ideas", []))
+                next_peer_context[to_candidate]["suggested_improvement"].extend(peer_payload.get("suggested_improvement", []))
 
                 _publish_message(
                     round_index=round_index,
@@ -778,6 +910,15 @@ def run_inbox_cycle(
                     },
                     thread_id=f"thread.improve.{from_candidate}.{to_candidate}",
                 )
+
+        for candidate_id, context in next_peer_context.items():
+            peer_context_by_candidate[candidate_id] = {
+                "observed_strengths": _merge_unique_lines(context.get("observed_strengths", []), limit=6),
+                "observed_weaknesses": _merge_unique_lines(context.get("observed_weaknesses", []), limit=6),
+                "borrowable_ideas": _merge_unique_lines(context.get("borrowable_ideas", []), limit=6),
+                "suggested_improvement": _merge_unique_lines(context.get("suggested_improvement", []), limit=6),
+            }
+            pending_must_fix_by_candidate[candidate_id] = []
 
         round_summary_path = run_dir / "runtime" / "round_summaries" / f"round_{round_index}.json"
         round_summary = summarize_round_messages(
@@ -883,53 +1024,84 @@ def run_inbox_cycle(
         )
 
         routing_summary_path = run_dir / "review" / f"redo_routing_round_{redo_round}.json"
-        route_review_feedback(
+        routing_payload = route_review_feedback(
             run_dir=run_dir,
             review_feedback_path=review_feedback_path,
             round_index=redo_round,
             output_path=routing_summary_path,
         )
+        pending_must_fix_by_candidate = {row["candidate_id"]: [] for row in candidate_rows}
+        for route in routing_payload.get("routes", []):
+            if not isinstance(route, dict):
+                continue
+            candidate_id = str(route.get("candidate_id", "")).strip()
+            note = str(route.get("must_fix_item", "")).strip()
+            if candidate_id and note and candidate_id in pending_must_fix_by_candidate:
+                pending_must_fix_by_candidate[candidate_id].append(note)
 
-        # Redo round: rerun worker updates with latest available artifacts
-        redo_blocked = False
         digests_by_candidate: dict[str, dict[str, Any]] = {}
+        redo_worker_summaries: dict[str, dict[str, Any]] = {}
+        redo_errors: list[str] = []
+
+        def _redo_job(row: dict[str, Any]) -> dict[str, Any]:
+            candidate_id = row["candidate_id"]
+            return execute_worker_experiment(
+                run_dir=run_dir,
+                run_id=run_id,
+                problem=problem,
+                candidate_id=candidate_id,
+                plan_name=row["plan_name"],
+                owner=row["worker"],
+                round_index=redo_round,
+                candidate_spec=row.get("candidate_spec", {}),
+                peer_context=peer_context_by_candidate.get(candidate_id, {}),
+                must_fix_items=pending_must_fix_by_candidate.get(candidate_id, []),
+                reports_root=reports_root,
+                allow_fallback_rounds=allow_fallback_rounds,
+                execution_mode=execution_mode,
+                worker_executor=worker_executor,
+                require_codex_success=require_codex_success,
+                codex_model=codex_model,
+                command_timeout_sec=worker_command_timeout_sec,
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(len(candidate_rows), 8))) as executor:
+            future_map = {executor.submit(_redo_job, row): row for row in candidate_rows}
+            for future in concurrent.futures.as_completed(future_map):
+                row = future_map[future]
+                candidate_id = row["candidate_id"]
+                try:
+                    redo_worker_summaries[candidate_id] = future.result()
+                except Exception as exc:
+                    redo_errors.append(f"{candidate_id}: {exc}")
+
+        if redo_errors:
+            _trace_event(
+                tracer=tracer,
+                step=f"pipeline.inbox.review.redo.{review_cycles + 1}",
+                status="warn",
+                message="redo iteration stopped due to worker execution failures",
+                inputs={"redo_round": redo_round},
+                outputs={"errors": redo_errors},
+            )
+            break
+
+        redo_experiment_rows: list[dict[str, Any]] = []
         for row in candidate_rows:
             candidate_id = row["candidate_id"]
             worker_role = row["worker"]
             plan_name = row["plan_name"]
+            worker_summary = redo_worker_summaries[candidate_id]
+            report_path = Path(str(worker_summary.get("report_path", "")))
+            metrics_path = Path(str(worker_summary.get("metrics_path", "")))
 
-            try:
-                report_path, metrics_path, used_round, used_fallback = resolve_artifacts(
-                    run_dir=run_dir,
-                    reports_root=reports_root,
-                    candidate_id=candidate_id,
-                    round_index=redo_round,
-                    allow_fallback_rounds=allow_fallback_rounds,
-                )
-            except FileNotFoundError as exc:
-                redo_blocked = True
-                _trace_event(
-                    tracer=tracer,
-                    step=f"round.{redo_round}.worker.{candidate_id}",
-                    status="warn",
-                    message="redo worker update skipped: missing artifacts",
-                    inputs={
-                        "candidate_id": candidate_id,
-                        "redo_round": redo_round,
-                    },
-                    outputs={
-                        "error": str(exc),
-                        "allow_fallback_rounds": allow_fallback_rounds,
-                    },
-                )
-                break
             digest_path = run_dir / "runtime" / "private_digests" / f"{candidate_id}_round_{redo_round}_digest.json"
             digest = digest_report(
                 report_path=report_path,
                 metrics_path=metrics_path,
                 candidate_id=candidate_id,
                 plan_name=plan_name,
-                round_index=used_round,
+                round_index=redo_round,
                 owner=worker_role,
                 output_path=digest_path,
                 status="active",
@@ -947,6 +1119,11 @@ def run_inbox_cycle(
                 "open_problems": normalize_lines(digest.get("open_problems")),
                 "next_move": normalize_lines(digest.get("proposed_next_move")),
                 "private_report_ref": str(report_path),
+                "notes_ref": str(worker_summary.get("notes_path", "")),
+                "execution_log_ref": str(worker_summary.get("execution_log_path", "")),
+                "execution_mode": str(worker_summary.get("execution_mode", "")),
+                "duration_ms": int(worker_summary.get("duration_ms", 0) or 0),
+                "input_fingerprint": str(worker_summary.get("input_fingerprint", "")),
             }
             redo_update_msg = _publish_message(
                 round_index=redo_round,
@@ -955,10 +1132,16 @@ def run_inbox_cycle(
                 message_type="worker_round_update",
                 correlation_id=f"redo_update_{candidate_id}_r{redo_round}",
                 payload=payload,
-                artifacts=[str(report_path), str(metrics_path)],
+                artifacts=[
+                    str(report_path),
+                    str(metrics_path),
+                    str(worker_summary.get("notes_path", "")),
+                    str(worker_summary.get("execution_log_path", "")),
+                ],
                 thread_id=f"thread.redo.update.{candidate_id}",
             )
             digests_by_candidate[candidate_id] = payload
+            redo_experiment_rows.append(worker_summary)
             _trace_event(
                 tracer=tracer,
                 step=f"round.{redo_round}.worker.{candidate_id}",
@@ -968,25 +1151,34 @@ def run_inbox_cycle(
                     "candidate_id": candidate_id,
                     "report_path": str(report_path),
                     "metrics_path": str(metrics_path),
+                    "execution_mode": worker_summary.get("execution_mode", ""),
                 },
                 outputs={
                     "redo_update_message_id": redo_update_msg.get("id", ""),
-                    "used_round": used_round,
-                    "fallback": used_fallback,
+                    "execution_log_path": worker_summary.get("execution_log_path", ""),
+                    "duration_ms": worker_summary.get("duration_ms", 0),
+                    "primary_metric": worker_summary.get("primary_metric"),
                 },
-                artifacts=[str(report_path), str(metrics_path), str(digest_path)],
+                artifacts=[
+                    str(report_path),
+                    str(metrics_path),
+                    str(worker_summary.get("notes_path", "")),
+                    str(worker_summary.get("execution_log_path", "")),
+                    str(digest_path),
+                ],
             )
 
-        if redo_blocked:
-            _trace_event(
-                tracer=tracer,
-                step=f"pipeline.inbox.review.redo.{review_cycles + 1}",
-                status="warn",
-                message="redo iteration stopped due to missing artifacts",
-                inputs={"redo_round": redo_round},
-                outputs={"blocked": True},
-            )
-            break
+        redo_experiment_round_path = run_dir / "runtime" / "experiment_rounds" / f"round_{redo_round}.json"
+        save_json(
+            redo_experiment_round_path,
+            {
+                "run_id": run_id,
+                "round": redo_round,
+                "execution_mode": execution_mode,
+                "workers": redo_experiment_rows,
+                "redo": True,
+            },
+        )
 
         round_summary_path = run_dir / "runtime" / "round_summaries" / f"round_{redo_round}.json"
         round_summary = summarize_round_messages(run_dir=run_dir, round_index=redo_round, output_path=round_summary_path)
@@ -1078,6 +1270,10 @@ def run_inbox_cycle(
         "approved": bool(review_payload.get("approved", False)),
         "review_cycles": review_cycles,
         "winner_candidate": conclusion.get("selected_solution", {}).get("winner_candidate_id", ""),
+        "execution_mode": execution_mode,
+        "worker_executor": worker_executor,
+        "require_codex_success": require_codex_success,
+        "codex_model": codex_model,
         "review_feedback_path": str(review_feedback_path),
         "review_report_path": str(review_report_path),
         "final_conclusion_json": str(conclusion_json),
@@ -1120,6 +1316,34 @@ def main() -> int:
     parser.add_argument("--max-rounds", type=int, default=3, help="Default implementation rounds.")
     parser.add_argument("--max-review-cycles", type=int, default=2, help="Max reviewer gate cycles.")
     parser.add_argument("--reports-root", help="Optional reports dir with <candidate>_round_<n>_report.md files.")
+    parser.add_argument(
+        "--execution-mode",
+        default="live",
+        choices=["live", "replay", "auto"],
+        help="Worker execution mode: live executes experiments, replay imports reports-root artifacts, auto uses replay when available else live.",
+    )
+    parser.add_argument(
+        "--worker-timeout-sec",
+        type=int,
+        default=900,
+        help="Timeout for optional worker external experiment command.",
+    )
+    parser.add_argument(
+        "--worker-executor",
+        default="codex",
+        choices=["codex", "simulation"],
+        help="Worker execution backend. codex directly invokes codex exec for round task completion.",
+    )
+    parser.add_argument(
+        "--require-codex-success",
+        action="store_true",
+        help="Fail run when codex execution fails instead of falling back to simulation.",
+    )
+    parser.add_argument(
+        "--codex-model",
+        default="",
+        help="Optional model override passed to codex exec.",
+    )
     parser.add_argument("--candidates-file", help="Optional path to candidates.json used when run plan is missing.")
     parser.add_argument("--acceptance-file", help="Optional path to acceptance_spec.json used when run plan is missing.")
     parser.add_argument(
@@ -1153,6 +1377,11 @@ def main() -> int:
         max_review_cycles=args.max_review_cycles,
         reports_root=Path(args.reports_root) if args.reports_root else None,
         allow_fallback_rounds=not args.strict_round_artifacts,
+        execution_mode=args.execution_mode,
+        worker_executor=args.worker_executor,
+        require_codex_success=args.require_codex_success,
+        codex_model=args.codex_model,
+        worker_command_timeout_sec=args.worker_timeout_sec,
         auto_plan=not args.skip_auto_plan,
         candidates_file_input=Path(args.candidates_file) if args.candidates_file else None,
         acceptance_file_input=Path(args.acceptance_file) if args.acceptance_file else None,

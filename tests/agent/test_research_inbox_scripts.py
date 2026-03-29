@@ -261,6 +261,9 @@ def test_run_inbox_cycle_end_to_end(tmp_path: Path) -> None:
         max_review_cycles=2,
         reports_root=reports_root,
         allow_fallback_rounds=False,
+        worker_executor="simulation",
+        require_codex_success=False,
+        codex_model="",
         auto_plan=False,
         candidates_file_input=candidates_file,
         acceptance_file_input=acceptance_file,
@@ -303,3 +306,81 @@ def test_run_inbox_cycle_end_to_end(tmp_path: Path) -> None:
     assert thread_payload.get("schema_version") == "inbox_threads_v1"
     assert int(thread_payload.get("message_count", 0) or 0) >= 1
     assert isinstance(thread_payload.get("threads"), list)
+
+
+def test_run_inbox_cycle_live_execution_generates_worker_experiment_artifacts(tmp_path: Path) -> None:
+    run_root = tmp_path / "runs"
+    candidates_file = tmp_path / "plan" / "candidates.json"
+    acceptance_file = tmp_path / "plan" / "acceptance_spec.json"
+
+    candidates = [
+        {"candidateId": "candidate_01", "name": "Plan A", "hypothesis": "A improves quality"},
+        {"candidateId": "candidate_02", "name": "Plan B", "hypothesis": "B reduces cost"},
+        {"candidateId": "candidate_03", "name": "Plan C", "hypothesis": "C improves robustness"},
+    ]
+    acceptance = {
+        "hard_requirements": [
+            "shared board can be initialized",
+            "worker digests can be published",
+            "peer feedback can be merged",
+            "agenda can be generated from board findings",
+            "review feedback can be generated with tool evidence",
+            "final conclusion artifacts can be generated",
+            "main experiment can be reproduced",
+            "report uses actual measured metrics",
+            "worker notes record adopted and rejected peer ideas",
+        ],
+        "soft_requirements": [],
+        "review_checks": [
+            {"name": "validate_inbox_envelope", "required": True},
+            {"name": "validate_candidate_coverage", "required": True},
+            {"name": "validate_execution_evidence", "required": True},
+            {"name": "verify_report_metric_consistency", "required": True},
+            {"name": "require_worker_notes_evidence", "required": True},
+        ],
+    }
+    research_board_lib.save_json(candidates_file, candidates)
+    research_board_lib.save_json(acceptance_file, acceptance)
+
+    summary = run_inbox_cycle.run_inbox_cycle(
+        run_root=run_root,
+        run_id="inbox_live_001",
+        problem="Validate live execution path",
+        candidate_count=3,
+        max_rounds=3,
+        max_review_cycles=2,
+        reports_root=None,
+        allow_fallback_rounds=False,
+        execution_mode="live",
+        worker_executor="simulation",
+        require_codex_success=False,
+        codex_model="",
+        worker_command_timeout_sec=120,
+        auto_plan=False,
+        candidates_file_input=candidates_file,
+        acceptance_file_input=acceptance_file,
+        debug_enabled=True,
+        debug_console=False,
+    )
+
+    run_dir = run_root / "inbox_live_001"
+    assert summary["approved"] is True
+    assert summary["execution_mode"] == "live"
+
+    for candidate_id in ("candidate_01", "candidate_02", "candidate_03"):
+        round_dir = run_dir / "implementation" / candidate_id / "round_3"
+        report_path = round_dir / "report.md"
+        metrics_path = round_dir / "metrics.json"
+        notes_path = round_dir / "notes.md"
+        log_path = round_dir / "execution_log.json"
+        assert report_path.exists()
+        assert metrics_path.exists()
+        assert notes_path.exists()
+        assert log_path.exists()
+
+        log_payload = json.loads(log_path.read_text(encoding="utf-8"))
+        assert log_payload.get("schema_version") == "worker_experiment_v1"
+        assert log_payload.get("execution_mode") in {"live_simulation", "external_command", "codex_exec"}
+
+    review_payload = json.loads((run_dir / "review" / "review_feedback.json").read_text(encoding="utf-8"))
+    assert review_payload.get("approved") is True

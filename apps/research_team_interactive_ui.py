@@ -364,6 +364,11 @@ def _init_state() -> None:
         "max_rounds": 3,
         "max_review_cycles": 2,
         "strict_round_artifacts": True,
+        "execution_mode": "live",
+        "worker_timeout_sec": 900,
+        "worker_executor": "codex",
+        "require_codex_success": False,
+        "codex_model": "",
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -375,13 +380,20 @@ def _run_pipeline() -> dict[str, Any]:
     problem = st.session_state.problem.strip()
     candidates_file = _path_from_input(st.session_state.candidates_file)
     acceptance_file = _path_from_input(st.session_state.acceptance_file)
-    reports_dir = _path_from_input(st.session_state.reports_dir)
+    execution_mode = str(st.session_state.execution_mode).strip().lower() or "live"
+    reports_dir_raw = str(st.session_state.reports_dir).strip()
+    reports_dir = _path_from_input(reports_dir_raw) if reports_dir_raw else Path("")
 
     if not candidates_file.exists():
         raise FileNotFoundError(f"candidates file not found: {candidates_file}")
     if not acceptance_file.exists():
         raise FileNotFoundError(f"acceptance file not found: {acceptance_file}")
-    if not reports_dir.exists():
+    if execution_mode == "replay":
+        if not reports_dir_raw:
+            raise FileNotFoundError("reports dir is required in replay mode")
+        if not reports_dir.exists():
+            raise FileNotFoundError(f"reports dir not found: {reports_dir}")
+    elif execution_mode == "auto" and reports_dir_raw and not reports_dir.exists():
         raise FileNotFoundError(f"reports dir not found: {reports_dir}")
 
     summary = run_inbox_cycle(
@@ -391,8 +403,13 @@ def _run_pipeline() -> dict[str, Any]:
         candidate_count=_candidate_count(candidates_file),
         max_rounds=int(st.session_state.max_rounds),
         max_review_cycles=int(st.session_state.max_review_cycles),
-        reports_root=reports_dir,
+        reports_root=reports_dir if reports_dir_raw else None,
         allow_fallback_rounds=not bool(st.session_state.strict_round_artifacts),
+        execution_mode=execution_mode,
+        worker_executor=str(st.session_state.worker_executor).strip() or "codex",
+        require_codex_success=bool(st.session_state.require_codex_success),
+        codex_model=str(st.session_state.codex_model).strip(),
+        worker_command_timeout_sec=int(st.session_state.worker_timeout_sec),
         auto_plan=False,
         candidates_file_input=candidates_file,
         acceptance_file_input=acceptance_file,
@@ -435,6 +452,11 @@ def main() -> None:
         st.text_input("Candidates File", key="candidates_file")
         st.text_input("Acceptance File", key="acceptance_file")
         st.text_input("Reports Dir", key="reports_dir")
+        st.selectbox("Execution Mode", options=["live", "replay", "auto"], key="execution_mode")
+        st.selectbox("Worker Executor", options=["codex", "simulation"], key="worker_executor")
+        st.checkbox("Require Codex Success", key="require_codex_success")
+        st.text_input("Codex Model (optional)", key="codex_model")
+        st.number_input("Worker Timeout (sec)", min_value=30, max_value=7200, step=30, key="worker_timeout_sec")
         st.number_input("Max Rounds", min_value=1, max_value=10, step=1, key="max_rounds")
         st.number_input("Max Review Cycles", min_value=1, max_value=10, step=1, key="max_review_cycles")
         st.checkbox("Strict Round Artifacts", key="strict_round_artifacts")
@@ -507,6 +529,32 @@ def main() -> None:
         if isinstance(conclusion, dict):
             st.markdown("**Final Conclusion**")
             st.json(conclusion)
+
+        execution_updates = [
+            row for row in messages
+            if str(row.get("type", "")) == "worker_round_update" and isinstance(row.get("payload"), dict)
+        ]
+        if execution_updates:
+            mode_counter = Counter(
+                str((row.get("payload") or {}).get("execution_mode", "unknown")).strip() or "unknown"
+                for row in execution_updates
+            )
+            with st.expander("实验执行证据摘要", expanded=False):
+                st.write("execution_mode 分布：", dict(mode_counter))
+                evidence_rows: list[dict[str, Any]] = []
+                for row in execution_updates:
+                    payload = row.get("payload", {})
+                    evidence_rows.append(
+                        {
+                            "round": row.get("round"),
+                            "candidate_id": payload.get("candidate_id"),
+                            "execution_mode": payload.get("execution_mode"),
+                            "report_ref": payload.get("private_report_ref"),
+                            "execution_log_ref": payload.get("execution_log_ref"),
+                            "duration_ms": payload.get("duration_ms"),
+                        }
+                    )
+                st.dataframe(evidence_rows, use_container_width=True, hide_index=True)
 
         progress = _round_progress(files.run_dir)
         if progress:
@@ -623,9 +671,10 @@ def main() -> None:
     with tabs[6]:
         st.subheader("说明")
         st.write("1. 推荐先用 CLI 跑 `run_inbox_cycle.py`，再用本 UI 做交互分析。")
-        st.write("2. 步骤调试页读取 `debug/runtime_trace.json`，支持 lane/call_id/message_id 过滤。")
-        st.write("3. 通信线程页读取 `debug/message_threads.json`，可定位孤儿 reply 与线程密度。")
-        st.write("4. 若要模拟 learn-claude-code 的 Team 协作观感，重点看“交互流程”与“通信线程”页签。")
+        st.write("2. 默认建议 `Worker Executor=codex`，Worker 将直接调用 codex 完成轮次任务。")
+        st.write("3. 步骤调试页读取 `debug/runtime_trace.json`，支持 lane/call_id/message_id 过滤。")
+        st.write("4. 通信线程页读取 `debug/message_threads.json`，可定位孤儿 reply 与线程密度。")
+        st.write("5. 若要模拟 learn-claude-code 的 Team 协作观感，重点看“交互流程”与“通信线程”页签。")
         st.code("streamlit run apps/research_team_interactive_ui.py", language="bash")
 
 

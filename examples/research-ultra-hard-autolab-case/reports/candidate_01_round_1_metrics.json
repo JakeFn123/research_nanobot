@@ -1,0 +1,9 @@
+{
+  "primary_metric": 0.78,
+  "secondary_metrics": {
+    "c2_plus_faradaic_efficiency": 0.61,
+    "uncertainty_index": 0.24,
+    "safety_violation_rate": 0.11,
+    "wetlab_cost_per_round_kusd": 132
+  }
+}

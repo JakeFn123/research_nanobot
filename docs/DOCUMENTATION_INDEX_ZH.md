@@ -33,6 +33,8 @@
 
 1. [RESEARCH_SYSTEM_COMPLETION_PLAN_ZH.md](./RESEARCH_SYSTEM_COMPLETION_PLAN_ZH.md)
    - 历史阶段的落地计划与里程碑（用于回溯，不作为当前唯一实现规范）
+2. [DESIGN_IMPL_ALIGNMENT_AUDIT_ZH.md](./DESIGN_IMPL_ALIGNMENT_AUDIT_ZH.md)
+   - 设计与实现一致性复查、差异与修复说明
 
 ## 5. 实战运行报告
 
@@ -42,8 +44,8 @@
 ## 6. 当前推荐执行路径（简版）
 
 1. 准备 `plan/candidates.json` 与 `plan/acceptance_spec.json`
-2. 准备每个候选方案 3 轮报告与指标
-3. 运行 `run_inbox_cycle.py`（Team+Inbox 主流程）
+2. 运行 `run_inbox_cycle.py`（Team+Inbox 主流程，默认 `execution-mode=live`）
+3. 若要复放已有数据，改用 `--execution-mode replay --reports-root <dir>`
 4. 查看 `deliverables/final_conclusion_inbox.json` 与 `debug/runtime_trace.md`
 5. 若评审未通过，按 `review/review_feedback.json` 打回重做
 
