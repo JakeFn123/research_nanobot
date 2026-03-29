@@ -2,6 +2,10 @@
 
 这份指南用最直白的方式解释 nanobot：它是什么、能做什么、怎么快速用起来。
 
+如果你要使用本项目的科研多智能体完整流程，请看：
+- `docs/RESEARCH_NANOBOT_USER_MANUAL_ZH.md`
+- `docs/DOCUMENTATION_INDEX_ZH.md`（中文文档总入口）
+
 ## 1）nanobot 是什么？
 
 nanobot 是一个轻量级个人 AI 助手框架。

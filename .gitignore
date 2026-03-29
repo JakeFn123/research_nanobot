@@ -25,3 +25,5 @@ nano.*.save
 uv.lock
 .demo_runs/
 .demo_runs_ui/
+.demo_runs_final_check/
+.demo_runs_backend/

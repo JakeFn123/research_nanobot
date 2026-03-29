@@ -1,99 +1,113 @@
-# Streamlit 本地可视化测试台
+# Streamlit 本地可视化测试指南（research_nanobot）
 
-本文档描述如何使用 `apps/research_flow_ui.py` 对 `research_nanobot` 的完整协议流程进行可视化测试。
+本文档说明如何使用 `apps/research_flow_ui.py` 在本地查看与调试科研流程。
 
-## 目标
+## 1. 先明确：UI 当前定位
 
-该 UI 面向本项目的协议链路验证，覆盖：
+当前 UI 主要用于：
 
-1. 初始化 run
-2. 从私有报告提取摘要
-3. 写入公共黑板
-4. 合并 peer feedback
-5. 校验黑板
-6. 聚合全局发现
-7. 生成下一轮动态议程
+1. 本地分步调试（兼容旧流程）
+2. 查看结论、调试轨迹
+3. 查看 Team+Inbox 消息（`Inbox通信` 页签）
 
-## 安装
+说明：
 
-在仓库根目录执行：
+- 当前主架构是 Team+Inbox，主执行建议使用 CLI 的 `run_inbox_cycle.py`。
+- UI 的“一键全流程”按钮仍调用旧版 `run_full_cycle.py`（兼容用途）。
+
+## 2. 安装
 
 ```bash
+cd /Users/jakefan/nanobot
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
 pip install -e .[ui]
 ```
 
-如果你已经安装过项目，仅需补装 UI 依赖：
-
-```bash
-pip install streamlit
-```
-
-## 启动
+## 3. 启动
 
 ```bash
 streamlit run apps/research_flow_ui.py
 ```
 
-启动后浏览器会打开本地页面（默认 `http://localhost:8501`）。
+默认地址：`http://localhost:8501`
 
-## 页面结构
+## 4. 页面说明
 
-UI 包含 4 个页签：
+UI 包含以下页签：
 
 1. `一键全流程`
 2. `分步执行`
 3. `结果可视化`
-4. `帮助`
+4. `结论`
+5. `调试日志`
+6. `Inbox通信`
+7. `帮助`
 
-## 推荐测试方式
+## 5. 推荐使用方式
 
-### 方式 A：一键全流程
+### 方式 A：CLI 跑主流程，UI 看日志（推荐）
 
-1. 在左侧 `运行配置` 中确认路径：
-   - `Candidates File`
-   - `Acceptance File`
-   - `Reports Dir`
-   - `Feedback Dir`
-2. 在 `一键全流程` 点击 `运行完整流程`
-3. 切换到 `结果可视化` 查看：
-   - `worker_board.json`
-   - `agenda.json`
-4. 重点确认：
-   - `agenda.round_index` 变为 `2`
-   - `active_candidates` 非空
-   - `priority_questions` 非空
+1. 先在终端执行：
 
-### 方式 B：分步调试
+```bash
+.venv/bin/python nanobot/skills/research-implementer/scripts/run_inbox_cycle.py \
+  --run-root .demo_runs_backend \
+  --run-id ui_observe_inbox_001 \
+  --problem "Your research problem" \
+  --candidate-count 3 \
+  --max-rounds 3 \
+  --max-review-cycles 2 \
+  --reports-root examples/research-e2e-ai-case/reports \
+  --candidates-file examples/research-e2e-ai-case/plan/candidates.json \
+  --acceptance-file examples/research-e2e-ai-case/plan/acceptance_spec.json \
+  --strict-round-artifacts \
+  --skip-auto-plan
+```
 
-按页面顺序点击：
+2. 打开 UI，将 `Run Root` 和 `Run ID` 指向上述 run。
+3. 在 `Inbox通信` 页签按角色/消息类型/轮次过滤消息。
+4. 在 `调试日志` 页签查看 `runtime_trace`。
 
-1. `初始化`
-2. `生成摘要并写入黑板`
-3. `合并所选反馈`
-4. `校验黑板`
-5. `聚合全局发现`
-6. `生成下一轮议程`
+### 方式 B：在 UI 内执行兼容旧流程（可选）
 
-该模式适合定位某一步的结构问题。
+1. 在左侧填写 `Candidates File / Reports Dir / Acceptance File`。
+2. 在 `一键全流程` 点击 `运行完整流程`。
+3. 用于验证旧版 `run_full_cycle.py` 路径是否可用。
 
-## 输入文件命名约定
+## 6. 输入命名约定
 
-UI 在自动流程中使用以下命名规则：
+### Team+Inbox 主流程（CLI）
 
-- 报告：`<candidate_id>_round_<round>_report.md`
-- 指标：`<candidate_id>_round_<round>_metrics.json`
-- 反馈：`<from_candidate>_on_<to_candidate>.json`
+- 报告：`<candidate_id>_round_<n>_report.md`
+- 指标：`<candidate_id>_round_<n>_metrics.json`
 
-默认示例在：
+推荐示例目录：
 
-- `examples/research-demo/reports/`
-- `examples/research-demo/feedback/`
+- `examples/research-e2e-ai-case/reports/`
+- `examples/research-hard-safety-case/reports/`
 
-## 注意事项
+## 7. 验收检查清单
 
-1. 共享黑板 `worker_board.json` 目前按顺序写入，避免并发写同一文件。
-2. Worker 之间应只通过摘要和反馈 JSON 交换关键信息，不直接共享完整报告。
-3. 若接入真实实验数据，保持 digest 和 feedback 的字段结构不变。
+1. `runtime/inbox/*.jsonl` 已生成
+2. `debug/runtime_trace.md` 有完整链路
+3. `review/review_feedback.json` 有 `approved` 与 `evidence`
+4. `deliverables/final_conclusion_inbox.json` 已生成
+
+## 8. 常见问题
+
+### 8.1 Inbox 页签显示空
+
+- 确认你跑的是 `run_inbox_cycle.py`
+- 确认 `Run Root / Run ID` 指向正确 run
+
+### 8.2 一键全流程与主架构不一致
+
+- 这是兼容性行为：UI 按钮仍走旧流程。
+- 主架构验证请用 CLI + UI 观察模式。
+
+### 8.3 文件路径报错
+
+- 使用绝对路径最稳
+- 确保 `Candidates File`、`Reports Dir` 与 `Acceptance File` 都存在

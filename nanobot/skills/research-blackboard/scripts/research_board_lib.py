@@ -167,12 +167,21 @@ def ensure_board_shape(board: dict[str, Any]) -> dict[str, Any]:
     board.setdefault("acceptance_spec_path", "")
     board.setdefault("round_index", 0)
     board.setdefault("workers", {})
+    board.setdefault("worker_ownership", {})
     board.setdefault("peer_feedback", {})
     board.setdefault("global_findings", {})
     if not isinstance(board["workers"], dict):
         raise ValueError("'workers' must be a JSON object.")
+    if not isinstance(board["worker_ownership"], dict):
+        raise ValueError("'worker_ownership' must be a JSON object.")
     if not isinstance(board["peer_feedback"], dict):
         raise ValueError("'peer_feedback' must be a JSON object.")
     if not isinstance(board["global_findings"], dict):
         raise ValueError("'global_findings' must be a JSON object.")
+    for candidate_id, entry in board["workers"].items():
+        if not isinstance(candidate_id, str) or not isinstance(entry, dict):
+            continue
+        owner = str(entry.get("owner", "")).strip()
+        if owner and candidate_id not in board["worker_ownership"]:
+            board["worker_ownership"][candidate_id] = owner
     return board

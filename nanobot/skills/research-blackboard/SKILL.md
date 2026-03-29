@@ -1,6 +1,6 @@
 ---
 name: research-blackboard
-description: Maintain the shared worker board and agenda files for dynamic multi-agent research collaboration. Use when initializing runs, validating board structure, publishing worker summaries, merging peer feedback, and generating the next agenda.
+description: Maintain the shared worker board, agenda, and final conclusion files for dynamic multi-agent research collaboration. Use when initializing runs, validating board structure, publishing worker summaries, merging peer feedback, generating the next agenda, and finalizing results.
 ---
 
 # Research Blackboard
@@ -18,6 +18,10 @@ Use this skill whenever the run depends on:
   - global findings
 - `agenda.json`
   - the next dynamic actions
+- `deliverables/final_conclusion.json`
+  - final structured conclusion for delivery
+- `deliverables/final_conclusion.md`
+  - readable final conclusion summary
 
 ## Available Scripts
 
@@ -57,9 +61,16 @@ Generate the next agenda:
 python nanobot/skills/research-blackboard/scripts/generate_agenda.py --help
 ```
 
+Generate final conclusion artifacts:
+
+```bash
+python nanobot/skills/research-blackboard/scripts/finalize_conclusion.py --help
+```
+
 ## Board Rules
 
 1. Each worker owns only its own entry under `workers.<candidate_id>`.
+   Use `--actor` when calling write scripts to enforce ownership.
 2. Peer feedback keys must be shaped like `<from>_on_<to>`.
 3. Global findings are derived, not hand-written.
 4. Keep the board high-signal. Never paste a full report into it.

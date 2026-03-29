@@ -23,9 +23,9 @@ def _candidate_name(candidate: dict[str, Any], fallback: str) -> str:
     return fallback
 
 
-def _initial_worker_entry(candidate_id: str, plan_name: str, hypothesis: str) -> dict[str, Any]:
+def _initial_worker_entry(candidate_id: str, plan_name: str, hypothesis: str, owner: str) -> dict[str, Any]:
     return {
-        "owner": "",
+        "owner": owner,
         "plan_name": plan_name,
         "round": 0,
         "status": "pending",
@@ -67,6 +67,7 @@ def init_research_run(
     candidates = extract_candidates(raw_candidates)
 
     workers: dict[str, dict[str, Any]] = {}
+    worker_ownership: dict[str, str] = {}
     worker_actions: dict[str, list[str]] = {}
     active_candidates: list[str] = []
 
@@ -74,7 +75,9 @@ def init_research_run(
         candidate_id = _candidate_id(index, candidate)
         plan_name = _candidate_name(candidate, candidate_id)
         hypothesis = str(candidate.get("hypothesis", "")).strip()
-        workers[candidate_id] = _initial_worker_entry(candidate_id, plan_name, hypothesis)
+        owner = f"worker_{index + 1:02d}"
+        workers[candidate_id] = _initial_worker_entry(candidate_id, plan_name, hypothesis, owner)
+        worker_ownership[candidate_id] = owner
         active_candidates.append(candidate_id)
         worker_actions[candidate_id] = [
             str(candidate.get("implementationSpec", "Build the first working version and measure it.")).strip()
@@ -95,6 +98,7 @@ def init_research_run(
         "acceptance_spec_path": "plan/acceptance_spec.json" if acceptance_file is not None else "",
         "round_index": 0,
         "workers": workers,
+        "worker_ownership": worker_ownership,
         "peer_feedback": {},
         "global_findings": {
             "dominant_strengths": [],
