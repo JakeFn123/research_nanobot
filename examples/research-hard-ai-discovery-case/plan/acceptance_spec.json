@@ -1,0 +1,25 @@
+{
+  "hard_requirements": [
+    "shared board can be initialized",
+    "worker digests can be published",
+    "peer feedback can be merged",
+    "agenda can be generated from board findings",
+    "review feedback can be generated with tool evidence",
+    "final conclusion artifacts can be generated"
+  ],
+  "soft_requirements": [
+    "workers should converge toward lower false negative risk across rounds",
+    "cross-candidate insight transfer should be visible in improvement proposals",
+    "final winner should show balanced quality, calibration, and explainability"
+  ],
+  "review_checks": [
+    {
+      "name": "validate_inbox_envelope",
+      "required": true
+    },
+    {
+      "name": "validate_candidate_coverage",
+      "required": true
+    }
+  ]
+}

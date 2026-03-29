@@ -1,0 +1,9 @@
+{
+  "primary_metric": 0.77,
+  "secondary_metrics": {
+    "fnr": 0.17,
+    "calibration_error": 0.063,
+    "hallucination_rate": 0.050,
+    "latency_s": 13.2
+  }
+}

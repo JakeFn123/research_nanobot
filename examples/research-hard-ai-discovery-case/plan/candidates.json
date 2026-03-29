@@ -1,0 +1,27 @@
+[
+  {
+    "candidateId": "candidate_01",
+    "name": "Counterfactual-RAG Hypothesis Miner",
+    "goal": "Fuse retrieval with intervention simulation to derive causal biomarker hypotheses."
+  },
+  {
+    "candidateId": "candidate_02",
+    "name": "Tool-Driven Program Synthesis Scientist",
+    "goal": "Use code-generation + symbolic checks to automate experiment design and ablation logic."
+  },
+  {
+    "candidateId": "candidate_03",
+    "name": "Debate-Consensus Scientist Ensemble",
+    "goal": "Use adversarial multi-agent debate plus verifier consensus for robust causal conclusions."
+  },
+  {
+    "candidateId": "candidate_04",
+    "name": "Bayesian Active Discovery Loop",
+    "goal": "Drive exploration by uncertainty-aware sampling and Bayesian model criticism."
+  },
+  {
+    "candidateId": "candidate_05",
+    "name": "Neuro-Symbolic Graph Lab",
+    "goal": "Combine graph memory, symbolic constraints, and neural adapters for cross-domain transfer."
+  }
+]
