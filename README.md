@@ -18,6 +18,29 @@
 
 📏 Real-time line count: run `bash core_agent_lines.sh` to verify anytime.
 
+## 项目介绍（中文）
+
+`research_nanobot` 是基于 nanobot 技术栈扩展的科研多智能体实现，当前主流程采用 **Team + Inbox（无共享黑板）** 架构：
+
+1. `Planner`：把模糊科研问题拆解为候选方案与验收标准
+2. `Implementer`：并行调度多个 Worker 三轮迭代
+3. `Worker`：只共享结构化关键信息，不共享完整私有报告
+4. `Reviewer`：基于工具证据验收，不通过则打回重做
+
+推荐主执行脚本：
+
+```bash
+.venv/bin/python nanobot/skills/research-implementer/scripts/run_inbox_cycle.py ...
+```
+
+推荐文档阅读顺序：
+
+1. [`docs/DOCUMENTATION_INDEX_ZH.md`](./docs/DOCUMENTATION_INDEX_ZH.md)
+2. [`EASY_START_GUIDE.md`](./EASY_START_GUIDE.md)
+3. [`docs/RESEARCH_NANOBOT_USER_MANUAL_ZH.md`](./docs/RESEARCH_NANOBOT_USER_MANUAL_ZH.md)
+4. [`docs/RESEARCH_MULTI_AGENT_SYSTEM_DESIGN_ZH.md`](./docs/RESEARCH_MULTI_AGENT_SYSTEM_DESIGN_ZH.md)
+5. [`docs/RESEARCH_AGENT_TEAM_INBOX_PROTOCOL_ZH.md`](./docs/RESEARCH_AGENT_TEAM_INBOX_PROTOCOL_ZH.md)
+
 ## 🇨🇳 中文快速上手
 
 > [!TIP]
@@ -147,7 +170,9 @@ nanobot gateway
 
 ## Table of Contents
 
+- [文档总览（中文）](./docs/DOCUMENTATION_INDEX_ZH.md)
 - [中文新手指南（EASY_START_GUIDE）](./EASY_START_GUIDE.md)
+- [科研用户手册（中文）](./docs/RESEARCH_NANOBOT_USER_MANUAL_ZH.md)
 - [中文快速上手](#-中文快速上手)
 - [News](#-news)
 - [Key Features](#key-features-of-nanobot)

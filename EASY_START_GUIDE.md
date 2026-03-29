@@ -4,6 +4,7 @@
 
 如果你要使用本项目的科研多智能体完整流程，请看：
 - `docs/RESEARCH_NANOBOT_USER_MANUAL_ZH.md`
+- `docs/DOCUMENTATION_INDEX_ZH.md`（中文文档总入口）
 
 ## 1）nanobot 是什么？
 
