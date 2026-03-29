@@ -32,7 +32,12 @@
 1. [RESEARCH_SYSTEM_COMPLETION_PLAN_ZH.md](./RESEARCH_SYSTEM_COMPLETION_PLAN_ZH.md)
    - 历史阶段的落地计划与里程碑（用于回溯，不作为当前唯一实现规范）
 
-## 5. 当前推荐执行路径（简版）
+## 5. 实战运行报告
+
+1. [HARD_AI_DISCOVERY_DEMO_REPORT_ZH.md](./HARD_AI_DISCOVERY_DEMO_REPORT_ZH.md)
+   - 高复杂度科研问题的完整闭环实跑记录（含 Debug 与 UI 验证）
+
+## 6. 当前推荐执行路径（简版）
 
 1. 准备 `plan/candidates.json` 与 `plan/acceptance_spec.json`
 2. 准备每个候选方案 3 轮报告与指标
@@ -40,7 +45,7 @@
 4. 查看 `deliverables/final_conclusion_inbox.json` 与 `debug/runtime_trace.md`
 5. 若评审未通过，按 `review/review_feedback.json` 打回重做
 
-## 6. 文档一致性说明
+## 7. 文档一致性说明
 
 为避免冲突，当前仓库以 **Team + Inbox（无共享黑板）** 作为主架构；
 若文档中出现旧版 `worker_board.json` / `run_full_cycle.py` 描述，请以本页链接的“系统设计”和“用户手册”最新内容为准。
