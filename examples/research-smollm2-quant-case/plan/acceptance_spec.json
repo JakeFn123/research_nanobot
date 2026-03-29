@@ -1,0 +1,45 @@
+{
+  "hard_requirements": [
+    "shared board can be initialized",
+    "worker digests can be published",
+    "peer feedback can be merged",
+    "agenda can be generated from board findings",
+    "review feedback can be generated with tool evidence",
+    "final conclusion artifacts can be generated",
+    "main experiment can be reproduced",
+    "report uses actual measured metrics",
+    "worker notes record adopted and rejected peer ideas"
+  ],
+  "soft_requirements": [
+    "perplexity delta should stay close to baseline",
+    "compression ratio should exceed one point five times",
+    "final winner should provide best quality-compression tradeoff"
+  ],
+  "review_checks": [
+    {
+      "name": "validate_inbox_envelope",
+      "tool": "exec",
+      "required": true
+    },
+    {
+      "name": "validate_candidate_coverage",
+      "tool": "exec",
+      "required": true
+    },
+    {
+      "name": "validate_execution_evidence",
+      "tool": "exec",
+      "required": true
+    },
+    {
+      "name": "verify_report_metric_consistency",
+      "tool": "exec",
+      "required": true
+    },
+    {
+      "name": "require_worker_notes_evidence",
+      "tool": "exec",
+      "required": true
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+Large language models are increasingly evaluated on reliability, efficiency, and adaptability.
+In practical deployment, model compression must preserve task quality while reducing hardware cost.
+Quantization is a common post-training technique that reduces storage precision from float32 to low-bit formats.
+The main risk is that quantization noise can increase perplexity and degrade downstream generation quality.
+For a stable engineering pipeline, each candidate strategy needs reproducible metrics and traceable artifacts.
+This includes baseline perplexity, quantized perplexity, compression ratio, and execution logs.
+Attention projection matrices and feed-forward layers often dominate parameter count in decoder-only transformers.
+Selective quantization can target those heavy layers while keeping normalization and embedding layers in high precision.
+Group-wise quantization introduces finer scale granularity than global per-tensor quantization.
+Smaller group sizes often improve quality retention but add scale metadata overhead.
+An effective experiment loop compares several strategies under fixed evaluation tokens and sequence chunking.
+The winner should satisfy a hard quality gate and still deliver meaningful model size reduction.
+Peer discussion between worker agents should focus on key insights, not full raw reports.
+Each worker can share weak points, transferable improvements, and concrete next tuning actions.
+A reviewer agent validates whether metrics come from real runs and whether artifacts are internally consistent.
+The final decision should balance perplexity stability, compression gain, and reproducibility.
+Research productivity improves when planning, implementation, and review are connected in one closed loop.
+A debug runtime trace is critical for diagnosing where quality regressions or tool failures appear.
+The system should support iterative refinement without editing core architecture code paths.
+Tools and skills can encapsulate experimental logic while preserving framework-level orchestration.

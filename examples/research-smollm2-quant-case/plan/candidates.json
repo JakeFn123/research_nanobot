@@ -1,0 +1,58 @@
+[
+  {
+    "candidateId": "candidate_01",
+    "name": "Q8 Selective Projection Quantization",
+    "hypothesis": "8-bit selective quantization on attention/MLP projection matrices can keep perplexity almost unchanged while reducing effective storage.",
+    "implementationSpec": "Apply per-channel 8-bit weight quantization to self-attention and MLP projection layers, keep embeddings and normalization in high precision.",
+    "expectedBenefits": [
+      "small perplexity delta",
+      "clear compression gain",
+      "high reproducibility"
+    ],
+    "risks": [
+      "compression gain may be lower than aggressive low-bit schemes",
+      "still requires careful module selection"
+    ],
+    "experiment": {
+      "command": "/Users/jakefan/nanobot/.venv/bin/python /Users/jakefan/nanobot/nanobot/skills/research-worker/scripts/run_smollm2_quant_experiment.py --strategy q8_selective --model-path /Users/jakefan/SmolLM2-135M-deploy/models/SmolLM2-360M-Instruct --eval-corpus /Users/jakefan/nanobot/examples/research-smollm2-quant-case/data/eval_corpus.txt --max-eval-tokens 896 --seq-len 128",
+      "timeout_sec": 2400
+    }
+  },
+  {
+    "candidateId": "candidate_02",
+    "name": "Q6 Balanced Group Quantization",
+    "hypothesis": "6-bit group-wise quantization can improve compression beyond 8-bit while keeping perplexity within a small acceptable drift.",
+    "implementationSpec": "Apply grouped 6-bit quantization with round-wise group size refinement to attention and MLP projections.",
+    "expectedBenefits": [
+      "better compression than int8",
+      "manageable perplexity drift",
+      "good size-quality balance"
+    ],
+    "risks": [
+      "group metadata introduces overhead",
+      "quality can regress if grouping is too coarse"
+    ],
+    "experiment": {
+      "command": "/Users/jakefan/nanobot/.venv/bin/python /Users/jakefan/nanobot/nanobot/skills/research-worker/scripts/run_smollm2_quant_experiment.py --strategy q6_balanced --model-path /Users/jakefan/SmolLM2-135M-deploy/models/SmolLM2-360M-Instruct --eval-corpus /Users/jakefan/nanobot/examples/research-smollm2-quant-case/data/eval_corpus.txt --max-eval-tokens 896 --seq-len 128",
+      "timeout_sec": 2400
+    }
+  },
+  {
+    "candidateId": "candidate_03",
+    "name": "Q4 Aggressive Quantization",
+    "hypothesis": "4-bit aggressive quantization can maximize compression, but may significantly affect perplexity.",
+    "implementationSpec": "Apply 4-bit group-wise quantization to major projection layers and selected embedding/head matrices for maximal size reduction.",
+    "expectedBenefits": [
+      "highest compression ratio",
+      "large storage saving"
+    ],
+    "risks": [
+      "higher perplexity drift",
+      "possible quality instability"
+    ],
+    "experiment": {
+      "command": "/Users/jakefan/nanobot/.venv/bin/python /Users/jakefan/nanobot/nanobot/skills/research-worker/scripts/run_smollm2_quant_experiment.py --strategy q4_aggressive --model-path /Users/jakefan/SmolLM2-135M-deploy/models/SmolLM2-360M-Instruct --eval-corpus /Users/jakefan/nanobot/examples/research-smollm2-quant-case/data/eval_corpus.txt --max-eval-tokens 896 --seq-len 128",
+      "timeout_sec": 2400
+    }
+  }
+]
